@@ -108,11 +108,15 @@ behind tagging, rendering and voice.
 ## Honest status
 
 Working end to end on real footage: indexing, vision tagging, planning, 30-second
-edits, Remotion overlays, hybrid voice, captions, crossfades, export, installer.
+edits, Remotion overlays, hybrid voice, captions, crossfades, export, installer,
+splash and auto-update. Verified: 779 tests, 66/66 route checks, both themes AA,
+30.000 s exports at −14/−16 LUFS with SRT and cover, and a 156 MB installer that
+launches on a clean profile.
 
-Still hardening: packaged overlay fallback, the review gate, saved facts in the UI,
-Arabic voice, batch, and the model bake-off against the client's own footage. The
-release gate is `docs/RELEASE.md`; the last audit is `docs/AUDIT.md`.
+Still open, and stated in the release notes: code signing, bundled Kokoro weights,
+Arabic voice, in-memory job queue, batch export, and real shot data in the shot
+review screen. The release gate is `docs/RELEASE.md`; the audit follow-up is
+`docs/AUDIT-STATUS.md`.
 
 ## Updates
 
