@@ -33,6 +33,22 @@ snaps cuts to the music grid.
 Rules: six words a caption line, two lines maximum, no address before the close,
 no invented facts. Price is `AED 1,850,000`; spec is 3 bed · 2 bath · 1,240 sq ft.
 
+## Location beat
+
+The reference sells location visually but never names it. The delivery cuts add a
+4-row proximity card at the living-room window, using only defensible claims:
+
+| Claim | Basis |
+|---|---|
+| Marina Walk — 1 min | Marina Gate 1 sits directly on Marina Walk (Property Finder listing) |
+| Spinneys — 3 min | Marina Walk supermarket, area guide |
+| Marina Mall — 5 min | Metropolitan Dubai Marina area guide |
+| JBR Beach — 10 min walk | Area guide; "moments from JBR" per the building listing |
+
+The opening shot is the marina view, not the presenter, with `DUBAI MARINA /
+ABOVE THE WALK` as a strap. No drive-time promises, no airport times, no yields —
+those need unit-level verification.
+
 ## The reference cut, and what changed
 
 The client's `Untitled design.mp4` (40.1 s, 1080×1920, 30 fps) is presenter-led:

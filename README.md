@@ -20,16 +20,20 @@ can approve or ask to change.
   a full 30-second cut with music, voice, captions, price card and end card.
 - **Says why.** Every shot carries a reason; every rejected shot stays visible with
   the defect that sank it.
-- **Hybrid voice.** The agent's real lines from the footage, bridged with a local
-  Kokoro voice, ducked under a licensed bed. The model is a one-click, resumable
-  92 MB download in Settings: a paused or dropped download continues from the byte
-  already on disk, and exports fall back to music (with a warning) until it is there.
+- **Studio voice.** ElevenLabs `eleven-v4` through OpenRouter, with a Settings
+  gallery of bundled sample voices (matilda default) and emotion tags in the
+  script. The agent's own recorded lines can lead and the studio voice can carry
+  the rest. Kokoro remains the offline fallback, downloaded on request (92 MB,
+  resumable).
 - **Captions that look designed.** Bricolage 800 uppercase, two lines maximum, no
   background plate, accent on the most substantial word.
 - **Aspect-aware.** 9:16, 16:9 and 1:1 from one edit; portrait into landscape uses a
   contained frame over a blurred fill rather than a hard crop.
 - **Edits on request.** "Swap the kitchen for the balcony, cut to 28 seconds" becomes a
   validated patch to the edit, previewed before it applies.
+- **Location-led marketing cut.** A 38-second beat sheet (hook → light → ritual →
+  craft → space → lift → price → close) with slice/zoom/light transitions and a
+  proximity card. Rendered in FFmpeg, not Remotion, so it takes minutes.
 - **Local by default.** Media never leaves the machine except derivative frames and
   short audio slices sent to the model provider.
 
@@ -114,15 +118,16 @@ behind tagging, rendering and voice.
 ## Honest status
 
 Working end to end on real footage: indexing, vision tagging, planning, 30-second
-edits, Remotion overlays, hybrid voice, captions, crossfades, export, installer,
-splash and auto-update. Verified: 779 tests, 66/66 route checks, both themes AA,
-30.000 s exports at −14/−16 LUFS with SRT and cover, and a 156 MB installer that
-launches on a clean profile.
+edits, the 38-second marketing cut, Remotion overlays, presenter + studio voice,
+captions, crossfades, export, installer, splash and auto-update. Verified: 820+
+tests, 66/66 route checks, both themes AA, 30.000 s exports at −14/−16 LUFS with
+SRT and cover, and a 198 MB installer that launches on a clean profile.
 
-Still open, and stated in the release notes: code signing, bundled Kokoro weights,
-Arabic voice, in-memory job queue, batch export, and real shot data in the shot
-review screen. The release gate is `docs/RELEASE.md`; the audit follow-up is
-`docs/AUDIT-STATUS.md`.
+Not yet wired: the remix engine (scene split, Scribe transcription, ordering
+presets) is built and tested in `services/remix` but has no screen or IPC yet.
+Also open: code signing, licensed music for delivery, Arabic voice, in-memory job
+queue, batch export, and real shot data in the shot review screen. New sessions
+should start with `AGENTS.md` and `docs/HANDOFF.md`.
 
 ## Updates
 
