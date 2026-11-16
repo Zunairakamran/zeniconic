@@ -80,7 +80,8 @@
             "agent_intro",
             "before_after",
             "drone_hero",
-            "vertical_tour"
+            "vertical_tour",
+            "marketing_38"
           ]
         },
         "label": { "type": "string" },
@@ -105,7 +106,18 @@
       "additionalProperties": false,
       "required": ["type", "durationSec"],
       "properties": {
-        "type": { "type": "string", "enum": ["cut", "dissolve", "slide", "whip"] },
+        "type": {
+          "type": "string",
+          "enum": [
+            "cut",
+            "dissolve",
+            "slide",
+            "whip",
+            "zoom_blur",
+            "luma_wipe",
+            "light_leak"
+          ]
+        },
         "durationSec": { "type": "number", "minimum": 0, "maximum": 1.5 }
       }
     },
@@ -166,6 +178,18 @@
         "transform": { "$ref": "#/$defs/Transform" },
         "transitionIn": { "$ref": "#/$defs/Transition" },
         "transitionOut": { "$ref": "#/$defs/Transition" },
+        "handleOutSec": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1.5,
+          "description": "Source seconds borrowed past outSec to feed the outgoing transition. Not part of the timeline."
+        },
+        "motionAtSelection": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Measured camera/subject motion on the selected shot, 0..1."
+        },
         "reason": {
           "type": "string",
           "maxLength": 160,
@@ -321,7 +345,7 @@
                 "enum": [
                   "duration", "no_black_frames", "no_freeze", "text_safe_area",
                   "cta_legible", "room_order", "loudness", "no_repeated_shot",
-                  "hook_visible", "facts_present"
+                  "hook_visible", "facts_present", "marketing_beats"
                 ]
               },
               "passed": { "type": "boolean" },

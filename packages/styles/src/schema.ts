@@ -26,6 +26,9 @@ export const TRANSITION_TYPES: readonly TransitionType[] = [
   'dissolve',
   'slide',
   'whip',
+  'zoom_blur',
+  'luma_wipe',
+  'light_leak',
 ];
 
 export const OVERLAY_STYLES: readonly OverlayStyle[] = [

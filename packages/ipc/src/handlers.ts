@@ -16,6 +16,7 @@ import type { JobRecord } from '@zeniconic/jobs';
 import { isValidListingId } from '@zeniconic/store';
 import type { Facts, ListingRecord, Store } from '@zeniconic/store';
 import { PROFILES } from '@zeniconic/render';
+import { VOICE_CATALOG, isVoiceId } from '../../../services/voice/src/voices';
 import type {
   CaptionMode,
   Channel,
@@ -35,6 +36,7 @@ import type {
   VariantSummary,
   VoiceMode,
   VoiceModelStatus,
+  VoiceOption,
 } from './contract';
 
 /** Minimal surface of `JsonStore`; a fake satisfies it in tests. */
@@ -82,6 +84,7 @@ export interface SettingsPortLike {
   setTheme(theme: Theme): Promise<void>;
   setKey(key: string): Promise<void>;
   keyStatus(): Promise<KeyStatus>;
+  setVoice(voiceId: string): Promise<void>;
 }
 
 /**
@@ -109,6 +112,17 @@ export interface HandlerDeps {
   openPath?: (path: string) => Promise<string>;
   /** Optional Kokoro downloader; absent in browser builds and plain tests. */
   voiceModel?: VoiceModelPort;
+  /** Bundled studio voice samples; absent returns metadata with no previews. */
+  voiceGallery?: VoiceGalleryPort;
+}
+
+/**
+ * The gallery adapter. The desktop main process resolves bundled sample ids to
+ * `data:` URLs; the handler validates every field before it reaches the
+ * renderer, so this port can never hand over a path.
+ */
+export interface VoiceGalleryPort {
+  list(): Promise<VoiceOption[]>;
 }
 
 /**
@@ -128,6 +142,7 @@ export type IpcErrorCode =
   | 'E_NOT_FOUND'
   | 'E_PIPELINE'
   | 'E_CHAT'
+  | 'E_VOICE'
   | 'E_VOICE_MODEL';
 
 /** Stable codes for logs and QA; the renderer shows `message`. */
@@ -270,6 +285,51 @@ function requireVoiceMode(value: unknown): VoiceMode {
     throw invalid('Voice must be restore, ai or music.');
   }
   return value as VoiceMode;
+}
+
+function requireVoiceId(value: unknown): string {
+  if (!isVoiceId(value)) {
+    throw invalid('Choose a voice from the gallery.');
+  }
+  return value;
+}
+
+/** Never let a port hand a path (or a non-audio URL) to the renderer. */
+function sanitiseVoiceOption(value: unknown): VoiceOption | null {
+  if (!isRecord(value) || !isVoiceId(value.id)) return null;
+  const known = VOICE_CATALOG.find((voice) => voice.id === value.id);
+  if (known === undefined) return null;
+
+  const sampleUrl =
+    typeof value.sampleUrl === 'string' &&
+    /^data:audio\/mpeg;base64,[A-Za-z0-9+/]+=*$/.test(value.sampleUrl)
+      ? value.sampleUrl
+      : undefined;
+
+  return {
+    id: known.id,
+    name: known.name,
+    accent: known.accent,
+    tone: [...known.tone],
+    gender: known.gender,
+    sampleId: known.id,
+    ...(sampleUrl === undefined ? {} : { sampleUrl }),
+    ...(typeof value.bytes === 'number' && Number.isFinite(value.bytes) && value.bytes > 0
+      ? { bytes: value.bytes }
+      : {}),
+  };
+}
+
+/** The metadata-only fallback when the build ships no samples. */
+function voiceCatalogue(): VoiceOption[] {
+  return VOICE_CATALOG.map((voice) => ({
+    id: voice.id,
+    name: voice.name,
+    accent: voice.accent,
+    tone: [...voice.tone],
+    gender: voice.gender,
+    sampleId: voice.id,
+  }));
 }
 
 function requireVariantId(value: unknown): string {
@@ -533,7 +593,7 @@ function requireDataPath(value: unknown, root: string): string {
  * same object runs in `ipcMain` and in a Vitest process.
  */
 export function createHandlers(deps: HandlerDeps): Handlers {
-  const { store, runner, pipeline, settings, chat, chooseFolder, dataDir, openPath, voiceModel } = deps;
+  const { store, runner, pipeline, settings, chat, chooseFolder, dataDir, openPath, voiceModel, voiceGallery } = deps;
 
   const handlers: Handlers = {
     'listings:list': async (): Promise<ListingRecord[]> => store.list(),
@@ -776,6 +836,25 @@ export function createHandlers(deps: HandlerDeps): Handlers {
     },
 
     'settings:keyStatus': async (): Promise<KeyStatus> => settings.keyStatus(),
+
+    'voice:list': async (): Promise<VoiceOption[]> => {
+      if (voiceGallery === undefined) return voiceCatalogue();
+      try {
+        const entries = await voiceGallery.list();
+        if (!Array.isArray(entries)) return voiceCatalogue();
+        const clean = entries
+          .map((entry) => sanitiseVoiceOption(entry))
+          .filter((entry): entry is VoiceOption => entry !== null);
+        // A port that lost every entry is a bug; the catalogue still works.
+        return clean.length === 0 ? voiceCatalogue() : clean;
+      } catch (error) {
+        throw new IpcError('E_VOICE', messageOf(error));
+      }
+    },
+
+    'voice:setVoice': async (voiceId): Promise<void> => {
+      await settings.setVoice(requireVoiceId(voiceId));
+    },
 
     'shell:openPath': async (path) => {
       const root = dataDir;

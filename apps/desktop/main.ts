@@ -30,7 +30,12 @@ import type {
 } from '../../packages/ipc/src/index';
 import { JsonStore } from '../../packages/store/src/index';
 import models from '../../services/pipeline/models.json';
-import { KokoroModelDownloader, modelRoot } from '../../services/voice/src/index';
+import {
+  configureStudioVoice,
+  createVoiceGallery,
+  KokoroModelDownloader,
+  modelRoot,
+} from '../../services/voice/src/index';
 import { createChatService } from './chat';
 import { DesktopPipeline } from './pipeline';
 import { createSplashWindow, waitMinimum } from './splash';
@@ -430,6 +435,27 @@ async function start(): Promise<void> {
 
   const runner = new JobRunner({ executor });
   const downloader = new KokoroModelDownloader({ root: modelRoot(root) });
+
+  /**
+   * The studio voice reads the same secure key Settings writes. Wiring it here
+   * (rather than in the pipeline) keeps the secret in one place; the export
+   * falls back to Kokoro with a warning when no key exists.
+   */
+  configureStudioVoice({
+    getApiKey: () => settings.getKey(),
+    getVoiceId: async () => (await settings.get()).voiceId,
+  });
+
+  /**
+   * Bundled previews live beside the Electron assets. In a packaged build the
+   * folder is inside `app.asar`; Electron reads the unpacked copy transparently.
+   * The gallery hands the renderer `data:` URLs, never this path.
+   */
+  const voicesDir =
+    process.env.ZENICONIC_VOICE_DIR?.trim() ||
+    join(__dirname, '..', '..', 'apps', 'desktop', 'electron', 'assets', 'voices');
+  const voiceGallery = createVoiceGallery({ dir: voicesDir });
+
   const voiceModel: VoiceModelPort = {
     status: () => downloader.status(),
     start: async () => {
@@ -455,6 +481,7 @@ async function start(): Promise<void> {
     dataDir: root,
     openPath: (path) => shell.openPath(path),
     voiceModel,
+    voiceGallery,
   });
 
   registerIpc(handlers);

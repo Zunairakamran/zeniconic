@@ -86,10 +86,29 @@ export interface SettingsSnapshot {
   /** True when an OpenRouter key is available to the main process. */
   modelConfigured: boolean;
   theme: Theme;
+  /** The studio voice selected in Settings; `matilda` by default. */
+  voiceId: string;
   /** The packaged app version, shown in Settings → Diagnostics. */
   version: string;
   /** Model spend recorded for this machine, in USD. */
   spendUsd: number;
+}
+
+/** One voice card in Settings. Paths never cross the bridge. */
+export interface VoiceOption {
+  /** Stable id; validated before it is stored or sent to the provider. */
+  id: string;
+  name: string;
+  accent: string;
+  /** Short tags, e.g. `warm`, `calm`. */
+  tone: string[];
+  gender: 'female' | 'male' | 'non-binary';
+  /** Identifier of the bundled preview; never a filesystem path. */
+  sampleId: string;
+  /** `data:audio/mpeg;base64,…`, or absent when no sample shipped. */
+  sampleUrl?: string;
+  /** Size of the bundled sample, when present. */
+  bytes?: number;
 }
 
 /** What the user asked the refine assistant to change. */
@@ -181,6 +200,10 @@ export interface IpcContract {
   'settings:setTheme': (theme: Theme) => Promise<void>;
   'settings:setKey': (key: string) => Promise<void>;
   'settings:keyStatus': () => Promise<KeyStatus>;
+  /** The catalogue plus bundled `data:` previews; no paths or keys. */
+  'voice:list': () => Promise<VoiceOption[]>;
+  /** Persists the selected studio voice; validated against the catalogue. */
+  'voice:setVoice': (voiceId: string) => Promise<void>;
   'shell:openPath': (path: string) => Promise<OpenPathResult>;
   'voice:modelStatus': () => Promise<VoiceModelStatus>;
   /** Starts or resumes the download, then returns at once; poll status. */
@@ -240,6 +263,8 @@ export const CHANNELS: readonly Channel[] = [
   'settings:setTheme',
   'settings:setKey',
   'settings:keyStatus',
+  'voice:list',
+  'voice:setVoice',
   'shell:openPath',
   'voice:modelStatus',
   'voice:modelDownload',

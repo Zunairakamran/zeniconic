@@ -377,6 +377,16 @@ export function checkCta(edl: Edl): CheckResult {
 
 /** Adjacent shots of the same room are the common "doubled kitchen" failure. */
 export function checkRoomOrder(edl: Edl): CheckResult {
+  // The marketing sheet breaks spatial order on purpose: it sells the idea of
+  // living, not the walking order. Failing it for a deliberate edit is noise.
+  if (edl.format.id === 'marketing_38') {
+    return {
+      id: 'room_order',
+      passed: true,
+      detail: 'The marketing cut breaks spatial order on purpose; room order is not a gate for this format.',
+    };
+  }
+
   const repeats: string[] = [];
   for (let index = 1; index < edl.clips.length; index += 1) {
     const previous = edl.clips[index - 1];
@@ -562,6 +572,144 @@ export function checkFacts(edl: Edl, facts: ReviewFacts | undefined): CheckResul
 
   return {
     id: 'facts_present',
+    passed: false,
+    detail: `${problems.slice(0, 3).join('; ')}.`,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Marketing beats
+// ---------------------------------------------------------------------------
+
+/** The brief's windows, kept as review's own contract rather than imported. */
+export const MARKETING_ENTRANCE_START_SEC = 23;
+export const MARKETING_ENTRANCE_END_SEC = 28.5;
+export const MARKETING_PRICE_START_SEC = 28.5;
+export const MARKETING_MIN_SEC = 36;
+export const MARKETING_MAX_SEC = 39;
+/** A cut may land this far off a beat window and still read as on it. */
+export const MARKETING_BEAT_SLACK_SEC = 0.3;
+/** Measured motion a hook needs before it can carry the first second. */
+export const MARKETING_HOOK_MOTION_MIN = 0.2;
+
+/** Rooms a marketing hook is allowed to open on. */
+const HOOK_ROOMS: ReadonlySet<string> = new Set([
+  'living',
+  'exterior',
+  'building',
+  'amenity',
+  'view',
+  'balcony',
+]);
+/** Rooms that may carry the entrance reveal, best first. */
+const ENTRANCE_ROOMS: ReadonlySet<string> = new Set(['entry', 'living', 'bedroom']);
+
+function roundMilli(value: number): number {
+  const rounded = Math.round(value * 1000) / 1000;
+  return Object.is(rounded, -0) ? 0 : rounded;
+}
+
+function clipTimelineStarts(edl: Edl): number[] {
+  const starts: number[] = [];
+  let cursor = 0;
+  for (const clip of edl.clips) {
+    starts.push(roundMilli(cursor));
+    cursor += (clip.outSec - clip.inSec) / Math.max(0.01, clip.speed);
+  }
+  return starts;
+}
+
+/**
+ * The marketing cut's structural gates, replacing `room_order`.
+ *
+ * A campaign is not a tour: it deliberately jumps from light to ritual to the
+ * door. What must be true is the sheet — a moving hook, the entrance reveal in
+ * its window, the price never early, and a film between 36 and 39 seconds.
+ * Returns `undefined` for every other format so their check list is unchanged.
+ */
+export function checkMarketingBeats(edl: Edl): CheckResult | undefined {
+  if (edl.format.id !== 'marketing_38') return undefined;
+
+  const total = roundMilli(
+    edl.clips.reduce(
+      (sum, clip) => sum + (clip.outSec - clip.inSec) / Math.max(0.01, clip.speed),
+      0,
+    ),
+  );
+  const starts = clipTimelineStarts(edl);
+  const boundaries = [...starts, total];
+  const problems: string[] = [];
+
+  if (total < MARKETING_MIN_SEC || total > MARKETING_MAX_SEC) {
+    problems.push(
+      `runs ${fixed(total)} s (needs ${String(MARKETING_MIN_SEC)}-${String(MARKETING_MAX_SEC)} s)`,
+    );
+  }
+
+  const hook = edl.clips[0];
+  if (hook === undefined) {
+    problems.push('has no hook clip');
+  } else {
+    const motion = hook.motionAtSelection;
+    if (motion === undefined) {
+      problems.push('the hook has no measured motion');
+    } else if (motion + 1e-9 < MARKETING_HOOK_MOTION_MIN) {
+      problems.push(
+        `the hook moves at ${fixed(motion * 100)}% (needs ${fixed(MARKETING_HOOK_MOTION_MIN * 100)}%)`,
+      );
+    }
+    if (hook.room !== undefined && !HOOK_ROOMS.has(hook.room)) {
+      problems.push(`the hook opens on ${hook.room} rather than a living or hero shot`);
+    }
+  }
+
+  const entranceAt = boundaries.findIndex(
+    (second) =>
+      Math.abs(second - MARKETING_ENTRANCE_START_SEC) <= MARKETING_BEAT_SLACK_SEC + 1e-9,
+  );
+  if (entranceAt < 0) {
+    problems.push(
+      `the entrance beat does not start at ${fixed(MARKETING_ENTRANCE_START_SEC, 1)} s`,
+    );
+  } else {
+    const clip = edl.clips[entranceAt];
+    if (clip === undefined || clip.room === undefined || !ENTRANCE_ROOMS.has(clip.room)) {
+      problems.push('the entrance beat is not a door or hall shot');
+    }
+    const closes = boundaries.some(
+      (second) =>
+        Math.abs(second - MARKETING_ENTRANCE_END_SEC) <= MARKETING_BEAT_SLACK_SEC + 1e-9,
+    );
+    if (!closes) {
+      problems.push(
+        `the entrance beat does not close at ${fixed(MARKETING_ENTRANCE_END_SEC, 1)} s`,
+      );
+    }
+  }
+
+  for (const overlay of edl.overlays) {
+    if (overlay.kind !== 'price') continue;
+    if (overlay.inSec + 1e-9 < MARKETING_PRICE_START_SEC - MARKETING_BEAT_SLACK_SEC) {
+      problems.push(
+        `the price appears at ${fixed(overlay.inSec, 2)} s, before ${fixed(MARKETING_PRICE_START_SEC, 1)} s`,
+      );
+    }
+  }
+
+  if (problems.length === 0) {
+    const motion = (hook?.motionAtSelection ?? 0) * 100;
+    return {
+      id: 'marketing_beats',
+      passed: true,
+      detail: `Marketing sheet holds: ${fixed(total)} s, a hook moving at ${fixed(motion)}%, the entrance at ${fixed(
+        MARKETING_ENTRANCE_START_SEC,
+        1,
+      )} s and the price after ${fixed(MARKETING_PRICE_START_SEC, 1)} s.`,
+    };
+  }
+
+  return {
+    id: 'marketing_beats',
     passed: false,
     detail: `${problems.slice(0, 3).join('; ')}.`,
   };

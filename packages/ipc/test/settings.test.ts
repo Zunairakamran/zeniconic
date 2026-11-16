@@ -35,6 +35,55 @@ afterEach(async () => {
   await Promise.all(pending.map((root) => rm(root, { recursive: true, force: true })));
 });
 
+describe('settings voice selection', () => {
+  it('defaults to matilda before anything is saved', async () => {
+    const root = await makeRoot();
+    const settings = createSettings({ dataDir: root, modelConfigured: false });
+    await expect(settings.get()).resolves.toMatchObject({ voiceId: 'matilda' });
+  });
+
+  it('persists the selected voice beside the theme', async () => {
+    const root = await makeRoot();
+    const settings = createSettings({ dataDir: root, modelConfigured: false });
+    await settings.setTheme('dark');
+    await settings.setVoice('george');
+
+    const file = join(root, 'settings.json');
+    const stored = JSON.parse(await readFile(file, 'utf8')) as Record<string, unknown>;
+    expect(stored).toMatchObject({ version: 1, theme: 'dark', voiceId: 'george' });
+
+    const reopened = createSettings({ dataDir: root, modelConfigured: false });
+    await expect(reopened.get()).resolves.toMatchObject({
+      theme: 'dark',
+      voiceId: 'george',
+    });
+  });
+
+  it('rejects an unknown voice without changing the file', async () => {
+    const root = await makeRoot();
+    const settings = createSettings({ dataDir: root, modelConfigured: false });
+    await settings.setVoice('lily');
+
+    await expect(settings.setVoice('../secrets')).rejects.toBeInstanceOf(RangeError);
+    await expect(settings.setVoice('nobody')).rejects.toBeInstanceOf(RangeError);
+    await expect(settings.get()).resolves.toMatchObject({ voiceId: 'lily' });
+  });
+
+  it('falls back to matilda on a corrupt or unknown stored voice', async () => {
+    const root = await makeRoot();
+    await writeFile(
+      join(root, 'settings.json'),
+      JSON.stringify({ version: 1, theme: 'dark', voiceId: 'from-the-future' }),
+      'utf8',
+    );
+    const settings = createSettings({ dataDir: root, modelConfigured: false });
+    await expect(settings.get()).resolves.toMatchObject({
+      theme: 'dark',
+      voiceId: 'matilda',
+    });
+  });
+});
+
 describe('settings key storage', () => {
   it('refuses to persist without credential storage and keeps a session key', async () => {
     const root = await makeRoot();

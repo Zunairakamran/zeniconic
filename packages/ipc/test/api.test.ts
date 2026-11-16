@@ -118,6 +118,17 @@ describe('api without the desktop bridge', () => {
     await expect(api.settings.get()).resolves.toMatchObject({ theme: 'dark' });
   });
 
+  it('lists the 21 demo voices and saves a choice', async () => {
+    const voices = await api.voice.list();
+    expect(voices).toHaveLength(21);
+    expect(voices[0]?.id).toBe('matilda');
+    expect(voices.every((voice) => voice.sampleUrl === undefined)).toBe(true);
+
+    await api.voice.setVoice('george');
+    await expect(api.settings.get()).resolves.toMatchObject({ voiceId: 'george' });
+    await expect(api.voice.setVoice('not-a-voice')).rejects.toThrow(/gallery/);
+  });
+
   it('returns a demo diff and applies the matching version', async () => {
     const sent = await api.chat.send({
       listingId: RECORD.id,

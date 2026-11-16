@@ -43,12 +43,24 @@ export interface VoiceTrackInput {
   edl: Edl;
   listingDir: string;
   presenterClips?: PresenterClipInput[];
-  /** Kokoro voice id. Defaults to `af_heart`. */
+  /**
+   * Studio voice id (`matilda` by default). When the studio is not configured
+   * the offline Kokoro voice is used instead and this value is ignored.
+   */
   voice?: string;
   /** Music bed path. Defaults to data/music/catchy-120.m4a; `null` disables it. */
   music?: string | null;
-  /** Injected for tests. Defaults to Kokoro. */
+  /** Injected for tests; wins over provider selection. */
   tts?: TtsEngine;
+  /** `auto` (default) uses the studio when a key exists, otherwise Kokoro. */
+  provider?: 'auto' | 'studio' | 'local';
+  /**
+   * The OpenRouter key from secure storage. Absent falls back to the process
+   * configuration (set by the Electron main process) and then to Kokoro.
+   */
+  getOpenRouterKey?: () => string | undefined | Promise<string | undefined>;
+  /** Studio model override; defaults to `elevenlabs/eleven-v4`. */
+  voiceModel?: string;
   /** Injected for tests. Defaults to the ffmpeg mixer. */
   mixer?: VoiceMixer;
   /** Defaults to data/voice at the repository root. */
@@ -65,6 +77,8 @@ export interface VoiceTrackResult {
   audioPath: string;
   captions: VoiceCaption[];
   durationSec: number;
+  /** Non-fatal notes, e.g. the studio falling back to the offline voice. */
+  warnings: string[];
 }
 
 export interface VoiceSegment {

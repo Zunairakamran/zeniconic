@@ -21,9 +21,48 @@ export type {
 } from './plan';
 
 export { VOICE_CACHE_VERSION, voiceLineKey, voiceLinePath } from './cache';
+export type { VoiceCacheTag } from './cache';
 
 export { DEFAULT_VOICE, KOKORO_MODEL_ID, createKokoroEngine } from './tts';
 export type { KokoroEngineOptions } from './tts';
+
+export {
+  STUDIO_CACHE_TAG,
+  STUDIO_MODEL_ID,
+  STUDIO_SAMPLE_RATE,
+  STUDIO_SPEECH_ENDPOINT,
+  STUDIO_TIMEOUT_MS,
+  STUDIO_USD_PER_CHAR,
+  StudioVoiceError,
+  configureStudioVoice,
+  createStudioEngine,
+  selectVoiceEngine,
+  studioVoiceConfig,
+  studioVoiceReady,
+} from './studio-tts';
+export type {
+  SelectVoiceEngineOptions,
+  StudioEngineOptions,
+  StudioVoiceConfig,
+  StudioVoiceErrorCode,
+  VoiceEngineSelection,
+  VoiceProvider,
+} from './studio-tts';
+
+export {
+  CURATED_VOICE_IDS,
+  DEFAULT_VOICE_ID,
+  SAMPLE_LINE,
+  VOICE_CATALOG,
+  VOICE_IDS,
+  isCuratedVoice,
+  isVoiceId,
+  voiceById,
+} from './voices';
+export type { VoiceGender, VoiceMeta } from './voices';
+
+export { MAX_SAMPLE_BYTES, VOICES_MANIFEST, createVoiceGallery } from './gallery';
+export type { VoiceSampleEntry } from './gallery';
 
 export {
   KOKORO_FILES,

@@ -105,7 +105,7 @@
       "!node_modules/onnxruntime-node/bin/napi-v3/win32/arm64/**",
       "!node_modules/ffprobe-static/bin/darwin/**",
       "!node_modules/ffprobe-static/bin/linux/**",
-      "!node_modules/!(ffmpeg-static|ffprobe-static|kokoro-js|phonemizer|onnxruntime-node|onnxruntime-common|sharp|@huggingface|@img)/**",
+      "!node_modules/!(ffmpeg-static|ffprobe-static|kokoro-js|phonemizer|onnxruntime-node|onnxruntime-common|sharp|detect-libc|semver|@huggingface|@img)/**",
       "!node_modules/ffprobe-static/bin/win32/ia32/**",
       "!**/*.map",
       "!.env",

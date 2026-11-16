@@ -171,6 +171,26 @@ function runtimeIssues(edl: Edl): ValidationIssue[] {
     const outNeighbour = next ? Math.min(own, clipDuration(next)) : own;
     check(clip.transitionIn, inNeighbour, `/clips/${index}/transitionIn/durationSec`);
     check(clip.transitionOut, outNeighbour, `/clips/${index}/transitionOut/durationSec`);
+
+    // A transition handle only has a job when the clip actually hands over to a
+    // non-cut transition, and it can never exceed that transition's length.
+    const handle = clip.handleOutSec;
+    if (handle !== undefined && handle > TIME_EPSILON_SEC) {
+      const outgoing = clip.transitionOut;
+      if (outgoing === undefined || outgoing.type === 'cut') {
+        issues.push({
+          path: `/clips/${index}/handleOutSec`,
+          code: 'E_HANDLE',
+          message: `Clip ${clip.id} carries a ${Number(handle.toFixed(3))}s handle but has no outgoing transition to spend it on`,
+        });
+      } else if (handle > outgoing.durationSec + TIME_EPSILON_SEC) {
+        issues.push({
+          path: `/clips/${index}/handleOutSec`,
+          code: 'E_HANDLE',
+          message: `Clip ${clip.id} borrows ${Number(handle.toFixed(3))}s for a ${Number(outgoing.durationSec.toFixed(3))}s transition`,
+        });
+      }
+    }
   });
 
   // 6. Caption words must run forwards and must not overlap.

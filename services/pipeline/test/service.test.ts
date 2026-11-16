@@ -127,6 +127,7 @@ describe('buildCandidates', () => {
         src: expect.stringMatching(/^raw\//),
         room: expect.any(String),
         score: expect.any(Number),
+        motion: expect.any(Number),
         inSec: expect.any(Number),
         outSec: expect.any(Number),
         reason: expect.any(String),
@@ -134,6 +135,9 @@ describe('buildCandidates', () => {
       expect(candidate.outSec).toBeGreaterThan(candidate.inSec);
       expect(candidate.score).toBeGreaterThanOrEqual(0.05);
       expect(candidate.score).toBeLessThanOrEqual(0.99);
+      // Motion is normalised to 0..1 so the marketing hook can rank on it.
+      expect(candidate.motion).toBeGreaterThanOrEqual(0);
+      expect(candidate.motion).toBeLessThanOrEqual(1);
       // Scores are exact to three decimals so the UI and the EDL agree.
       expect(candidate.score).toBe(Math.round(candidate.score * 1000) / 1000);
       expect(candidate.reason).toContain('blur');
@@ -181,6 +185,30 @@ describe('buildCandidates', () => {
     expect(sharp?.score).toBe(0.99);
     expect(soft?.score).toBe(0.05);
     expect(sharp?.score).toBeGreaterThan(soft?.score ?? 0);
+  });
+
+  it('prefers a vision-tagged room over the filename heuristic', () => {
+    const index = makeIndex();
+    const tagged = index.clips[0]?.shots[0];
+    if (tagged === undefined) throw new Error('fixture has no shot');
+    tagged.tags = {
+      room: 'living',
+      cameraMove: 'pan_right',
+      sellingPoints: ['natural_light', 'balcony_access'],
+      defects: [],
+      score: 82,
+      confidence: 0.9,
+    };
+
+    const candidates = buildCandidates(index);
+    const shot = candidates.find((candidate) => candidate.shotId === tagged.id);
+
+    expect(shot).toMatchObject({
+      room: 'living',
+      score: 0.82,
+      sellingPoints: ['natural_light', 'balcony_access'],
+    });
+    expect(shot?.motion).toBeGreaterThan(0);
   });
 });
 

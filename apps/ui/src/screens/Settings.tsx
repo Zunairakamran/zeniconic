@@ -1,8 +1,9 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { Badge, Button, Card, Icon, Progress } from '../ui';
 import { applyTheme, getStoredTheme, type Theme } from '../theme';
 import { api } from '../api';
-import type { VoiceModelStatus } from '../api';
+import type { VoiceModelStatus, VoiceOption } from '../api';
+import { DEFAULT_VOICE_ID, SAMPLE_LINE } from '../../../../services/voice/src/voices';
 import type { ScreenProps } from '../types';
 import './Settings.css';
 
@@ -75,6 +76,14 @@ export function SettingsScreen({ dataDir }: ScreenProps) {
   const [voice, setVoice] = useState<VoiceModelStatus | null>(null);
   const [voiceBusy, setVoiceBusy] = useState(false);
   const [voiceError, setVoiceError] = useState<string | undefined>();
+  const [catalogue, setCatalogue] = useState<VoiceOption[] | null>(null);
+  const [catalogueError, setCatalogueError] = useState<string | undefined>();
+  const [selectedVoice, setSelectedVoice] = useState(DEFAULT_VOICE_ID);
+  const [savingVoice, setSavingVoice] = useState<string | null>(null);
+  const [voiceChoiceError, setVoiceChoiceError] = useState<string | undefined>();
+  const [playError, setPlayError] = useState<string | undefined>();
+  const [playingVoice, setPlayingVoice] = useState<string | null>(null);
+  const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
     let live = true;
@@ -134,21 +143,97 @@ export function SettingsScreen({ dataDir }: ScreenProps) {
     }
   };
   const [snapshot, setSnapshot] = useState<
-    { dataDir: string; spendUsd: number; version: string } | undefined
+    { dataDir: string; spendUsd: number; version: string; voiceId: string } | undefined
   >();
 
   useEffect(() => {
     void api.settings
       .get()
-      .then((settings) =>
+      .then((settings) => {
         setSnapshot({
           dataDir: settings.dataDir,
           spendUsd: settings.spendUsd,
           version: settings.version,
-        }),
-      )
+          voiceId: settings.voiceId,
+        });
+        setSelectedVoice(settings.voiceId);
+      })
       .catch(() => undefined);
   }, []);
+
+  useEffect(() => {
+    let live = true;
+    void api.voice
+      .list()
+      .then((voices) => {
+        if (live) setCatalogue(voices);
+      })
+      .catch((error: unknown) => {
+        if (live) {
+          setCatalogue([]);
+          setCatalogueError(
+            error instanceof Error
+              ? error.message
+              : 'The voice gallery could not be loaded.',
+          );
+        }
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // One shared element: starting a second preview must stop the first.
+  useEffect(
+    () => () => {
+      const audio = audioRef.current;
+      if (audio !== null) {
+        audio.pause();
+        audioRef.current = null;
+      }
+    },
+    [],
+  );
+
+  const playVoice = (option: VoiceOption) => {
+    setPlayError(undefined);
+    if (option.sampleUrl === undefined) {
+      setPlayError(
+        `No preview shipped for ${option.name}. The voice can still be used when a key is configured.`,
+      );
+      return;
+    }
+
+    const audio = audioRef.current ?? new Audio();
+    audioRef.current = audio;
+    audio.pause();
+    audio.onended = () => setPlayingVoice(null);
+    audio.onerror = () => {
+      setPlayingVoice(null);
+      setPlayError(`The preview for ${option.name} could not play.`);
+    };
+    audio.src = option.sampleUrl;
+    setPlayingVoice(option.id);
+    void audio.play().catch(() => {
+      setPlayingVoice(null);
+      setPlayError(`The preview for ${option.name} could not play.`);
+    });
+  };
+
+  const chooseVoice = async (option: VoiceOption) => {
+    setSavingVoice(option.id);
+    setVoiceChoiceError(undefined);
+    try {
+      await api.voice.setVoice(option.id);
+      setSelectedVoice(option.id);
+    } catch (error) {
+      setVoiceChoiceError(
+        error instanceof Error ? error.message : 'That voice could not be saved.',
+      );
+    } finally {
+      setSavingVoice(null);
+    }
+  };
 
   // Everything displayed here comes from `settings:get`; the screen never
   // invents a folder, a spend total or a version.
@@ -300,9 +385,100 @@ export function SettingsScreen({ dataDir }: ScreenProps) {
           </div>
         </Card>
 
+        <Card className="settings__card settings__card--gallery">
+          <div className="settings__card-head">
+            <h2>Voice</h2>
+            <span className="settings__meta">Studio · ElevenLabs · no network for previews</span>
+          </div>
+          <div className="settings__body" aria-busy={catalogue === null}>
+            <p className="settings__note">
+              The voice that speaks every bridge line. Previews are bundled, so playing one
+              never calls the model; choosing a voice saves it for the next export.
+            </p>
+            <p className="settings__sample" aria-label="Sample line">
+              &ldquo;{SAMPLE_LINE}&rdquo;
+            </p>
+
+            {catalogue === null ? (
+              <p className="settings__note" role="status" aria-live="polite">
+                Loading voices…
+              </p>
+            ) : catalogue.length === 0 ? (
+              <p className="settings__note" role="alert">
+                {catalogueError ?? 'No voices are available in this build.'}
+              </p>
+            ) : (
+              <div className="settings__voices" role="group" aria-label="Studio voices">
+                {catalogue.map((option) => {
+                  const selected = option.id === selectedVoice;
+                  const playing = playingVoice === option.id;
+                  return (
+                    <article
+                      className={`settings__voice-card${selected ? ' is-selected' : ''}`}
+                      key={option.id}
+                    >
+                      <div className="settings__voice-top">
+                        <b>{option.name}</b>
+                        {selected ? <Badge tone="ok">Selected</Badge> : null}
+                      </div>
+                      <span className="settings__voice-meta">
+                        {option.accent} · {option.gender}
+                      </span>
+                      <div className="settings__voice-tags">
+                        {option.tone.map((tag) => (
+                          <span className="settings__tag" key={tag}>
+                            {tag}
+                          </span>
+                        ))}
+                      </div>
+                      <div className="settings__voice-actions">
+                        <Button
+                          size="sm"
+                          variant="quiet"
+                          icon="play"
+                          onClick={() => playVoice(option)}
+                          disabled={playing}
+                          aria-label={`Play ${option.name} sample`}
+                          title={
+                            option.sampleUrl === undefined
+                              ? 'No bundled preview for this voice'
+                              : 'Play the bundled sample'
+                          }
+                        >
+                          {playing ? 'Playing' : 'Play'}
+                        </Button>
+                        <Button
+                          size="sm"
+                          variant={selected ? 'secondary' : 'primary'}
+                          aria-pressed={selected}
+                          onClick={() => void chooseVoice(option)}
+                          disabled={selected || savingVoice !== null}
+                        >
+                          {savingVoice === option.id ? 'Saving…' : 'Use this voice'}
+                        </Button>
+                      </div>
+                    </article>
+                  );
+                })}
+              </div>
+            )}
+
+            {playError ? (
+              <p className="settings__note" role="alert" style={{ color: 'var(--danger-text)' }}>
+                {playError}
+              </p>
+            ) : null}
+            {voiceChoiceError ? (
+              <p className="settings__note" role="alert" style={{ color: 'var(--danger-text)' }}>
+                {voiceChoiceError}
+              </p>
+            ) : null}
+          </div>
+        </Card>
+
         <Card className="settings__card settings__card--voice">
           <div className="settings__card-head">
-            <h2>Voice model</h2>
+            <h2>Offline voice model</h2>
             <Badge
               tone={
                 voice?.installed

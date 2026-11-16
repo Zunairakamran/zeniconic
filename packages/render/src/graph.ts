@@ -53,12 +53,36 @@ type XfadeTransition = Exclude<TransitionType, 'cut'>;
  * (`ffmpeg -h filter=xfade` lists it as transition 15). It has existed since
  * `xfade` landed in FFmpeg 4.3, so no fallback is compiled in; on a build that
  * predates it, swap `whip` to `wipeleft`, which is the closest early filter.
+ *
+ * The marketing three:
+ *   zoom_blur → `zoomin`   (a punch-in that smears into the next shot)
+ *   luma_wipe → `hblur`    (horizontal luminance sweep)
+ *   light_leak → `radial`  (circular bloom wipe)
+ * `fadeblack` is kept as the alternate for `light_leak` on a build without
+ * `radial`; all five names the brief asks for live here.
  */
 const XFADE_BY_TYPE: Record<XfadeTransition, string> = {
   dissolve: 'fade',
   slide: 'slideleft',
   whip: 'smoothleft',
+  zoom_blur: 'zoomin',
+  luma_wipe: 'hblur',
+  light_leak: 'radial',
 };
+
+/** Used when a build's `xfade` lacks the primary transition above. */
+export const XFADE_ALTERNATE: Partial<Record<XfadeTransition, string>> = {
+  light_leak: 'fadeblack',
+};
+
+/** The full palette the marketing sheet relies on. */
+export const XFADE_PALETTE = {
+  zoom_blur: 'zoomin',
+  luma_wipe: 'hblur',
+  light_leak: 'radial',
+  whip: 'smoothleft',
+  light_leak_alternate: 'fadeblack',
+} as const;
 
 /** Schema cap. Duplicated here because the graph is a runtime boundary. */
 const MAX_TRANSITION_SEC = 1.5;
@@ -69,13 +93,9 @@ const MAX_TRANSITION_SEC = 1.5;
  */
 const TIMING_EPSILON_SEC = 0.0005;
 
-interface XfadeJoin {
-  readonly type: XfadeTransition;
-  readonly name: string;
-  /** Overlap, already rounded to the 3 dp written into the graph. */
-  readonly durationSec: number;
-  /** Start relative to the first clip of this segment, rounded to 3 dp. */
-  readonly offsetSec: number;
+/** Seconds always carry three decimals, so snapshots stay stable. */
+function sec3(value: number): string {
+  return roundTime(value).toFixed(3);
 }
 
 /**
@@ -86,13 +106,188 @@ interface XfadeJoin {
 interface Segment {
   readonly indices: number[];
   readonly joins: Map<number, XfadeJoin>;
-  /** Printed offset of the last xfade plus the last clip's printed duration. */
+  /** Printed offset of the last xfade plus the last decoded stream's length. */
   durationSec: number;
 }
 
-/** Seconds always carry three decimals, so snapshots stay stable. */
-function sec3(value: number): string {
-  return roundTime(value).toFixed(3);
+interface XfadeJoin {
+  readonly type: XfadeTransition;
+  readonly name: string;
+  /** Overlap, already rounded to the 3 dp written into the graph. */
+  readonly durationSec: number;
+  /** Start relative to the first clip of this segment, rounded to 3 dp. */
+  readonly offsetSec: number;
+}
+
+interface JoinSpec {
+  readonly type: XfadeTransition;
+  readonly name: string;
+  readonly durationSec: number;
+}
+
+interface SegmentPlan {
+  readonly segments: Segment[];
+  /** Effective source seconds each clip lends its outgoing transition. */
+  readonly handles: number[];
+  readonly warnings: string[];
+}
+
+/**
+ * Split the timeline into `xfade` runs.
+ *
+ * Two passes. The first decides which boundaries are transitions, using the
+ * nominal clip lengths — conservative, because a handle only ever adds
+ * picture. The second lays the surviving transitions out on the *stream*
+ * lengths so the assembled film is exactly as long as the EDL: the handle and
+ * the overlap cancel, and the transition begins on the planned boundary.
+ *
+ * A cut-only EDL produces the same segments, offsets and duration as before;
+ * handles are opt-in and default to zero.
+ */
+function planSegments(edl: Edl): SegmentPlan {
+  const warnings: string[] = [];
+  const durations = edl.clips.map(clipTimelineSec);
+  const firstDuration = durations[0];
+  if (firstDuration === undefined) {
+    throw new RangeError('An EDL needs at least one clip to build a filter graph.');
+  }
+
+  // Pass 1: which boundaries are transitions.
+  const joined = edl.clips.map(() => false);
+  const specs = new Map<number, JoinSpec>();
+
+  {
+    const segments: Segment[] = [{ indices: [0], joins: new Map(), durationSec: firstDuration }];
+    let current = segments[0]!;
+    let lastXfadeEndSec = 0;
+
+    for (let index = 1; index < edl.clips.length; index += 1) {
+      const incoming = edl.clips[index];
+      const previous = edl.clips[index - 1];
+      const duration = durations[index];
+      const previousDuration = durations[index - 1];
+      if (
+        incoming === undefined ||
+        previous === undefined ||
+        duration === undefined ||
+        previousDuration === undefined
+      ) {
+        throw new RangeError(`Clip ${index} is missing from the timeline.`);
+      }
+
+      const transition = incoming.transitionIn;
+
+      const mirrored = previous.transitionOut;
+      if (mirrored !== undefined && mirrored.type !== 'cut' && transition.type === 'cut') {
+        warnings.push(
+          `Clip ${previous.id} transitionOut asks for ${mirrored.type} ${sec3(mirrored.durationSec)}s but ${incoming.id} transitionIn is a cut; rendering a cut.`,
+        );
+      }
+
+      let join: XfadeJoin | undefined;
+      if (transition.type !== 'cut') {
+        const overlapSec = roundTime(transition.durationSec);
+        const shorter = Math.min(previousDuration, duration);
+
+        if (!Number.isFinite(overlapSec) || overlapSec <= 0) {
+          warnings.push(
+            `Clip ${incoming.id} transitionIn ${transition.type} has an invalid ${sec3(transition.durationSec)}s duration; rendering a cut.`,
+          );
+        } else if (overlapSec > MAX_TRANSITION_SEC) {
+          warnings.push(
+            `Clip ${incoming.id} transitionIn ${transition.type} ${sec3(overlapSec)}s exceeds the ${sec3(MAX_TRANSITION_SEC)}s maximum; rendering a cut.`,
+          );
+        } else if (overlapSec > shorter + TIMING_EPSILON_SEC) {
+          warnings.push(
+            `Clip ${incoming.id} transitionIn ${transition.type} ${sec3(overlapSec)}s is longer than the ${sec3(shorter)}s shorter neighbour; rendering a cut.`,
+          );
+        } else {
+          const offsetSec = roundTime(current.durationSec - overlapSec);
+          if (offsetSec < 0) {
+            warnings.push(
+              `Clip ${incoming.id} transitionIn ${transition.type} ${sec3(overlapSec)}s starts before the segment timeline; rendering a cut.`,
+            );
+          } else if (offsetSec + TIMING_EPSILON_SEC < lastXfadeEndSec) {
+            warnings.push(
+              `Clip ${incoming.id} transitionIn ${transition.type} ${sec3(overlapSec)}s would start at ${sec3(offsetSec)}s, before the previous transition ends at ${sec3(lastXfadeEndSec)}s; rendering a cut.`,
+            );
+          } else {
+            join = {
+              type: transition.type,
+              name: XFADE_BY_TYPE[transition.type],
+              durationSec: overlapSec,
+              offsetSec,
+            };
+          }
+        }
+      }
+
+      if (join !== undefined) {
+        joined[index] = true;
+        specs.set(index, {
+          type: join.type,
+          name: join.name,
+          durationSec: join.durationSec,
+        });
+        current.indices.push(index);
+        current.durationSec = join.offsetSec + duration;
+        lastXfadeEndSec = roundTime(join.offsetSec + join.durationSec);
+      } else {
+        current = { indices: [index], joins: new Map(), durationSec: duration };
+        segments.push(current);
+        lastXfadeEndSec = 0;
+      }
+    }
+  }
+
+  // A handle is only spent when the boundary after the clip really is an
+  // xfade. The outgoing shot lends the whole overlap from source picture past
+  // its nominal out point, so the decoded stream is `clip + transition` long
+  // and the xfade, which consumes exactly that overlap, leaves the assembled
+  // film the length the EDL declares. The transition therefore starts on the
+  // beat boundary and the incoming shot is fully visible `d` later.
+  const handles = edl.clips.map((clip, index) =>
+    joined[index + 1] === true ? declaredHandle(clip) : 0,
+  );
+
+  // Pass 2: real offsets on the decoded stream lengths.
+  const segments: Segment[] = [];
+  let current: Segment | undefined;
+  let cursorSec = 0;
+
+  edl.clips.forEach((clip, index) => {
+    const duration = durations[index] ?? 0;
+    const stream = streamSec(clip, handles[index] ?? 0);
+
+    if (index === 0) {
+      current = { indices: [0], joins: new Map(), durationSec: stream };
+      segments.push(current);
+      cursorSec = stream;
+      return;
+    }
+
+    const spec = specs.get(index);
+    if (spec === undefined || current === undefined) {
+      current = { indices: [index], joins: new Map(), durationSec: stream };
+      segments.push(current);
+      cursorSec = stream;
+      return;
+    }
+
+    const offsetSec = roundTime(cursorSec - spec.durationSec);
+    const join: XfadeJoin = {
+      type: spec.type,
+      name: spec.name,
+      durationSec: spec.durationSec,
+      offsetSec: Math.max(0, offsetSec),
+    };
+    current.joins.set(index, join);
+    current.indices.push(index);
+    current.durationSec = roundTime(join.offsetSec + stream);
+    cursorSec = current.durationSec;
+  });
+
+  return { segments, handles, warnings };
 }
 
 /** Speeds are dimensionless; trim trailing zeroes but keep three-dp rounding. */
@@ -136,6 +331,21 @@ function clipTimelineSec(clip: Clip): number {
   return (outSec - inSec) / speed;
 }
 
+/**
+ * Timeline seconds of the decoded stream, including the transition handle the
+ * clip lends to its outgoing `xfade`. The handle is not part of the EDL's
+ * duration; it exists only so the overlap cannot shorten the film.
+ */
+function streamSec(clip: Clip, handleSec: number): number {
+  const speed = roundTime(clip.speed);
+  return clipTimelineSec(clip) + Math.max(0, roundTime(handleSec)) / speed;
+}
+
+function declaredHandle(clip: Clip): number {
+  const handle = clip.handleOutSec ?? 0;
+  return Number.isFinite(handle) && handle > 0 ? roundTime(handle) : 0;
+}
+
 /** `[i:v]trim…` plus the scale/crop branch for one clip. */
 function clipChains(
   clip: Clip,
@@ -143,6 +353,7 @@ function clipChains(
   input: number,
   profile: RenderProfile,
   normaliseFormat: boolean,
+  handleSec = 0,
 ): string[] {
   if (!(clip.outSec > clip.inSec)) {
     throw new RangeError(
@@ -156,7 +367,10 @@ function clipChains(
   const { width, height } = profile;
   // `trim` selects the source window; `setpts` rebases the timestamps and then
   // divides by speed, so 1.25× both shortens the window and speeds playback.
-  const head = `[${input}:v]trim=start=${sec3(clip.inSec)}:end=${sec3(clip.outSec)},setpts=(PTS-STARTPTS)/${speed3(clip.speed)}`;
+  // A transition handle extends the window past `outSec`; the xfade that
+  // consumes it then leaves the assembled timeline exactly as the EDL says.
+  const trimEnd = roundTime(clip.outSec) + Math.max(0, roundTime(handleSec));
+  const head = `[${input}:v]trim=start=${sec3(clip.inSec)}:end=${sec3(trimEnd)},setpts=(PTS-STARTPTS)/${speed3(clip.speed)}`;
   // xfade and concat require matching pixel formats across every branch. The
   // cut-only path omits the filter so its graph stays identical to v1.
   const format = normaliseFormat ? ',format=yuv420p' : '';
@@ -207,115 +421,6 @@ function clipChains(
 }
 
 /**
- * Split the timeline into `xfade` runs. Each boundary is resolved once: an
- * unusable transition becomes a cut here, so the emitted graph and the `-t`
- * value can never disagree about which overlaps exist.
- */
-function planSegments(edl: Edl): { segments: Segment[]; warnings: string[] } {
-  const warnings: string[] = [];
-  const durations = edl.clips.map(clipTimelineSec);
-  const firstDuration = durations[0];
-  if (firstDuration === undefined) {
-    throw new RangeError('An EDL needs at least one clip to build a filter graph.');
-  }
-
-  const segments: Segment[] = [
-    { indices: [0], joins: new Map(), durationSec: firstDuration },
-  ];
-  let current = segments[0];
-  if (!current) throw new Error('Failed to seed the timeline.');
-  let lastXfadeEndSec = 0;
-
-  for (let index = 1; index < edl.clips.length; index += 1) {
-    const incoming = edl.clips[index];
-    const previous = edl.clips[index - 1];
-    const duration = durations[index];
-    const previousDuration = durations[index - 1];
-    if (
-      incoming === undefined ||
-      previous === undefined ||
-      duration === undefined ||
-      previousDuration === undefined
-    ) {
-      throw new RangeError(`Clip ${index} is missing from the timeline.`);
-    }
-
-    const transition = incoming.transitionIn;
-
-    // transitionOut is a mirror of the next clip's transitionIn. A non-cut
-    // transitionOut that the incoming cut would drop is a real inconsistency.
-    const mirrored = previous.transitionOut;
-    if (
-      mirrored !== undefined &&
-      mirrored.type !== 'cut' &&
-      transition.type === 'cut'
-    ) {
-      warnings.push(
-        `Clip ${previous.id} transitionOut asks for ${mirrored.type} ${sec3(mirrored.durationSec)}s but ${incoming.id} transitionIn is a cut; rendering a cut.`,
-      );
-    }
-
-    let join: XfadeJoin | undefined;
-    if (transition.type !== 'cut') {
-      const overlapSec = roundTime(transition.durationSec);
-      const shorter = Math.min(previousDuration, duration);
-
-      if (!Number.isFinite(overlapSec) || overlapSec <= 0) {
-        warnings.push(
-          `Clip ${incoming.id} transitionIn ${transition.type} has an invalid ${sec3(transition.durationSec)}s duration; rendering a cut.`,
-        );
-      } else if (overlapSec > MAX_TRANSITION_SEC) {
-        warnings.push(
-          `Clip ${incoming.id} transitionIn ${transition.type} ${sec3(overlapSec)}s exceeds the ${sec3(MAX_TRANSITION_SEC)}s maximum; rendering a cut.`,
-        );
-      } else if (overlapSec > shorter + TIMING_EPSILON_SEC) {
-        // The validator should have caught this; a defensive cut is cheaper
-        // than asking xfade to overlap picture that does not exist.
-        warnings.push(
-          `Clip ${incoming.id} transitionIn ${transition.type} ${sec3(overlapSec)}s is longer than the ${sec3(shorter)}s shorter neighbour; rendering a cut.`,
-        );
-      } else {
-        // The overlap begins `overlapSec` before the end of the accumulated
-        // stream. Every offset is cumulative: each earlier clip contributes
-        // its full duration, each earlier transition subtracts its overlap.
-        const offsetSec = roundTime(current.durationSec - overlapSec);
-        if (offsetSec < 0) {
-          warnings.push(
-            `Clip ${incoming.id} transitionIn ${transition.type} ${sec3(overlapSec)}s starts before the segment timeline; rendering a cut.`,
-          );
-        } else if (offsetSec + TIMING_EPSILON_SEC < lastXfadeEndSec) {
-          // Two transitions cannot share picture. Starting the second one at
-          // the end of the first would change its overlap, so use a cut.
-          warnings.push(
-            `Clip ${incoming.id} transitionIn ${transition.type} ${sec3(overlapSec)}s would start at ${sec3(offsetSec)}s, before the previous transition ends at ${sec3(lastXfadeEndSec)}s; rendering a cut.`,
-          );
-        } else {
-          join = {
-            type: transition.type,
-            name: XFADE_BY_TYPE[transition.type],
-            durationSec: overlapSec,
-            offsetSec,
-          };
-        }
-      }
-    }
-
-    if (join !== undefined) {
-      current.joins.set(index, join);
-      current.indices.push(index);
-      current.durationSec = join.offsetSec + duration;
-      lastXfadeEndSec = roundTime(join.offsetSec + join.durationSec);
-    } else {
-      current = { indices: [index], joins: new Map(), durationSec: duration };
-      segments.push(current);
-      lastXfadeEndSec = 0;
-    }
-  }
-
-  return { segments, warnings };
-}
-
-/**
  * FFmpeg filter parsers treat `:` as an option separator even inside a
  * filename, and Windows paths contain one. Forward slashes plus an escaped
  * drive colon survive both `subtitles=` and the filtergraph parser.
@@ -355,12 +460,13 @@ function buildGraphResult(
   edl: Edl,
   profile: RenderProfile,
   captionsPath?: string,
+  postFilters?: readonly string[],
 ): GraphResult {
   if (edl.clips.length === 0) {
     throw new RangeError('An EDL needs at least one clip to build a filter graph.');
   }
 
-  const { segments, warnings } = planSegments(edl);
+  const { segments, handles, warnings } = planSegments(edl);
   const usesXfade = segments.some((segment) => segment.joins.size > 0);
 
   const videoPaths = uniquePaths(edl.clips.map((clip) => clip.src));
@@ -373,7 +479,7 @@ function buildGraphResult(
     if (input === undefined) {
       throw new Error(`Clip ${clip.id} references an input that was not registered.`);
     }
-    chains.push(...clipChains(clip, index, input, profile, usesXfade));
+    chains.push(...clipChains(clip, index, input, profile, usesXfade, handles[index] ?? 0));
   });
 
   let durationSec: number;
@@ -445,6 +551,16 @@ function buildGraphResult(
     );
   }
 
+  if (postFilters !== undefined && postFilters.length > 0) {
+    // `drawtext` layers and any other text the caller owns are appended after
+    // libass, so a caption can never paint over a price card. A single chained
+    // `[outv]…[outv]` statement keeps the label contract intact.
+    const extra = postFilters.filter((filter) => filter.trim().length > 0);
+    if (extra.length > 0) {
+      chains.push(`[outv]${extra.join(',')}[outv]`);
+    }
+  }
+
   return { graph: chains.join(';'), durationSec, warnings };
 }
 
@@ -467,8 +583,9 @@ export function buildGraphForRender(
   edl: Edl,
   profile: RenderProfile,
   captionsPath?: string,
+  postFilters?: readonly string[],
 ): GraphResult {
-  return buildGraphResult(edl, profile, captionsPath);
+  return buildGraphResult(edl, profile, captionsPath, postFilters);
 }
 
 /**

@@ -49,10 +49,12 @@ import type {
   VoiceMode,
 } from '../../packages/ipc/src/index';
 import type { Candidate, Facts as PlannerFacts } from '../../packages/planner/src/index';
+import { MARKETING_FORMAT_ID } from '../../packages/planner/src/index';
 import { PROFILES } from '../../packages/render/src/index';
 import type { ProfileId, Quality } from '../../packages/render/src/index';
 import type { Facts, ListingRecord, Store } from '../../packages/store/src/index';
 import { analyseFolder, buildRequest, defaultCanvas, planEdl, renderEdl } from '../../services/pipeline/service';
+import { renderMarketingFilm } from '../../services/pipeline/marketing';
 import {
   renderFfmpegOverlays,
   resolveFontsDirectory,
@@ -71,6 +73,8 @@ import {
   presenterWindowForCue,
   presenterWindowsFor,
   scriptCues,
+  selectVoiceEngine,
+  studioVoiceReady,
   voiceLinePath,
 } from '../../services/voice/src/index';
 import type { VoiceCaption } from '../../services/voice/src/index';
@@ -1017,36 +1021,69 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
           const picture = join(workDir, `${variant.look}_${profile}_picture.mp4`);
           const output = await this.outputPath(listing, variant.look, profile);
 
-          try {
-            await renderEdl(pictureEdl, profile, quality, picture, {
-              // The picture pass is the one long FFmpeg step; it gets what is
-              // left of the budget, not an open-ended slot.
-              timeoutMs: Math.max(60_000, deadline - Date.now()),
-            });
-          } catch (error) {
-            throw new Error(
-              `Could not render the ${labelFor(variant.look)} ${profile} video: ${messageOf(error)}`,
-            );
-          }
+          let overlayOutput: string;
+          const marketing =
+            sourceEdl.format.id === MARKETING_FORMAT_ID &&
+            process.env.ZENICONIC_REMOTION !== 'on';
 
-          const overlay = await this.renderOverlays({
-            edl: captionedEdl,
-            profile,
-            quality,
-            picture,
-            workDir,
-            captions: input.captions,
-            brand,
-            facts,
-            deadline,
-            fontsDir,
-          });
-          if (overlay.warning !== undefined) warnings.push(overlay.warning);
+          if (marketing) {
+            // The 38 s campaign renders picture, xfade transitions, ASS captions
+            // and the price/entrance/spec cards in one FFmpeg pass. A Remotion
+            // pass of this length cannot fit the export budget.
+            const film = join(workDir, `${variant.look}_${profile}_marketing.mp4`);
+            try {
+              const rendered = await renderMarketingFilm({
+                edl: captionedEdl,
+                profile,
+                quality,
+                output: film,
+                workDir,
+                fontsDir,
+                facts,
+                ...(brand === undefined ? {} : { brand }),
+                burnCaptions: input.captions === 'burned' || input.captions === 'both',
+                // One pass, and it gets what is left rather than a blank slate.
+                timeoutMs: Math.max(60_000, Math.min(deadline - Date.now(), 5 * 60_000)),
+              });
+              overlayOutput = rendered.output;
+            } catch (error) {
+              throw new Error(
+                `Could not render the marketing cut for ${profile}: ${messageOf(error)}`,
+              );
+            }
+          } else {
+            try {
+              await renderEdl(pictureEdl, profile, quality, picture, {
+                // The picture pass is the one long FFmpeg step; it gets what is
+                // left of the budget, not an open-ended slot.
+                timeoutMs: Math.max(60_000, deadline - Date.now()),
+              });
+            } catch (error) {
+              throw new Error(
+                `Could not render the ${labelFor(variant.look)} ${profile} video: ${messageOf(error)}`,
+              );
+            }
+
+            const overlay = await this.renderOverlays({
+              edl: captionedEdl,
+              profile,
+              quality,
+              picture,
+              workDir,
+              captions: input.captions,
+              brand,
+              facts,
+              deadline,
+              fontsDir,
+            });
+            if (overlay.warning !== undefined) warnings.push(overlay.warning);
+            overlayOutput = overlay.output;
+          }
 
           if (voice.audioPath !== undefined) {
             try {
               await this.muxVoice(
-                overlay.output,
+                overlayOutput,
                 voice.audioPath,
                 output,
                 profile,
@@ -1060,10 +1097,10 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
               warnings.push(
                 `The audio track could not be added (${messageOf(error)}); exporting silent video.`,
               );
-              await copyFile(overlay.output, output);
+              await copyFile(overlayOutput, output);
             }
           } else {
-            await copyFile(overlay.output, output);
+            await copyFile(overlayOutput, output);
           }
 
           if (!(await exists(output))) {
@@ -1219,9 +1256,12 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
   }
 
   /**
-   * A cache miss must not hold an export hostage to a 90 MB download. If every
-   * line is cached the model is never touched; otherwise the export uses music
-   * until the voice stage has been run once.
+   * The **offline** engine's preflight.
+   *
+   * A verified Kokoro cache is the only thing that keeps the export out of a
+   * 92 MB mid-render download; cached lines are enough without one. Studio
+   * (ElevenLabs via OpenRouter) needs no model directory at all, so this check
+   * is never run for it.
    */
   private async voiceIsReady(
     edl: Edl,
@@ -1288,27 +1328,53 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
 
     let voiceReady = true;
     let modelCache: string | undefined;
+    let voiceProvider: 'studio' | 'local' = 'local';
+    let studioReady = false;
+    let voiceFailure: string | undefined;
+
     if (input.mode !== 'music') {
       try {
-        modelCache = await this.resolveVoiceModelDir(modelDir);
-        voiceReady = await this.voiceIsReady(preparedEdl, input.listingDir, cacheDir, modelCache);
+        // The studio key and voice are configured once in the main process
+        // (`configureStudioVoice`); a key means the studio can speak with no
+        // local model at all. Nothing here starts a download.
+        studioReady = await studioVoiceReady();
+        const selection = await selectVoiceEngine({ cacheDir, modelDir });
+        voiceProvider = selection.provider;
+
+        if (voiceProvider === 'studio') {
+          // Studio engine: no Kokoro directory and no model download required.
+          // Cached lines still short-circuit the network inside buildVoiceTrack.
+          voiceReady = true;
+        } else {
+          // Offline engine: require a verified cache or every line cached.
+          modelCache = await this.resolveVoiceModelDir(modelDir);
+          voiceReady = await this.voiceIsReady(
+            preparedEdl,
+            input.listingDir,
+            cacheDir,
+            modelCache,
+          );
+        }
       } catch (error) {
-        console.warn(`[pipeline] voice preflight failed: ${messageOf(error)}`);
+        voiceFailure = messageOf(error);
+        console.warn(`[pipeline] voice preflight failed: ${voiceFailure}`);
         voiceReady = false;
       }
     }
 
     if (!voiceReady) {
       // Never fetch 92 MB behind the user's back: Settings owns that decision.
-      // The export stays music-only and says what to do next.
+      // The export stays music-only and names the engine that was missing.
+      const detail =
+        voiceProvider === 'studio' || studioReady
+          ? `The studio voice could not be prepared${voiceFailure === undefined ? '' : ` (${voiceFailure})`}; exporting with music only. Check the OpenRouter key in Settings, or install the offline voice model.`
+          : modelCache !== undefined
+            ? 'The offline voice model is installed, but this listing has no speech cache yet. Re-export to use the voice, or keep music.'
+            : 'No OpenRouter key is configured and the offline voice model is not downloaded. Add a key in Settings, or open Settings → Voice model to get the offline voice; this export uses music only.';
       return {
         ...withMusic(),
         captions: [],
-        warnings: [
-          modelCache !== undefined
-            ? 'The voice model is installed, but this listing has no speech cache yet. Re-export to use the voice, or keep music.'
-            : 'The voice model is not downloaded. Open Settings → Voice model to get it; this export uses music only.',
-        ],
+        warnings: [detail],
       };
     }
 
@@ -1340,7 +1406,9 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
         warnings: [
           input.mode === 'music' || music === undefined
             ? `The music bed could not be mastered (${reason}); exporting without audio.`
-            : `The voice track could not be built (${reason}); exporting with music only.`,
+            : voiceProvider === 'studio'
+              ? `The studio voice could not be used (${reason}); exporting with music only. Check the OpenRouter key in Settings, or install the offline voice model.`
+              : `The voice track could not be built (${reason}); exporting with music only.`,
         ],
       };
     }

@@ -97,7 +97,10 @@ export function Shot({ clip, src, fps, canvas, transitionFrames }: ShotProps) {
   }
 
   const trimBefore = Math.max(0, Math.round(clip.inSec * fps));
-  const sourceFrames = Math.max(1, Math.round((clip.outSec - clip.inSec) * fps));
+  // The outgoing transition borrows `handleOutSec` of picture past the nominal
+  // out point, so the source window must include it or the overlap freezes.
+  const handleFrames = Math.max(0, Math.round((clip.handleOutSec ?? 0) * fps));
+  const sourceFrames = Math.max(1, Math.round((clip.outSec - clip.inSec) * fps) + handleFrames);
   const videoProps = {
     src: staticFile(src),
     trimBefore,

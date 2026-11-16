@@ -22,10 +22,12 @@ import {
 } from '../../../packages/overlays/src/index';
 import type { Edl } from '../../../packages/edl/src/types';
 import { voiceLinePath } from './cache';
+import type { VoiceCacheTag } from './cache';
 import { createFfmpegMixer } from './mixer';
 import { buildVoicePlan, presenterWindowForCue } from './plan';
 import type { PresenterWindow, ScriptCue, TtsLine } from './plan';
-import { createKokoroEngine, DEFAULT_VOICE } from './tts';
+import { DEFAULT_VOICE } from './tts';
+import { selectVoiceEngine } from './studio-tts';
 import type {
   PresenterClipInput,
   TtsEngine,
@@ -257,8 +259,9 @@ async function synthesiseLine(
   voice: string,
   engine: TtsEngine,
   cacheDir: string,
+  cacheTag: VoiceCacheTag,
 ): Promise<TtsLine> {
-  const file = voiceLinePath(cacheDir, text, voice);
+  const file = voiceLinePath(cacheDir, text, voice, cacheTag);
   if (existsSync(file)) {
     try {
       // A file that only passes "bigger than a header" is how a truncated
@@ -313,12 +316,36 @@ export async function buildVoiceTrack(input: VoiceTrackInput): Promise<VoiceTrac
     throw new RangeError(`Voice track needs a positive duration, received ${totalSec}`);
   }
 
-  const voice = input.voice ?? DEFAULT_VOICE;
+  const voice = input.voice;
   const cues = scriptCues(input.edl);
   const windows = presenterWindowsFor(input.edl, listingDir, input.presenterClips);
-  const engine = input.tts ?? createKokoroEngine(undefined, {
-    ...(input.modelDir === undefined ? {} : { modelDir: input.modelDir }),
-  });
+
+  let engine: TtsEngine;
+  let spokenVoice: string;
+  let cacheTag: VoiceCacheTag;
+  let warnings: string[] = [];
+
+  if (input.tts !== undefined) {
+    engine = input.tts;
+    spokenVoice = voice ?? DEFAULT_VOICE;
+    cacheTag = { provider: 'local', model: 'kokoro-82m' };
+  } else {
+    const selection = await selectVoiceEngine({
+      provider: input.provider ?? 'auto',
+      ...(input.getOpenRouterKey === undefined
+        ? {}
+        : { getApiKey: input.getOpenRouterKey }),
+      ...(voice === undefined ? {} : { voiceId: voice }),
+      cacheDir,
+      ...(input.modelDir === undefined ? {} : { modelDir: input.modelDir }),
+      ...(input.voiceModel === undefined ? {} : { studioModel: input.voiceModel }),
+    });
+    engine = selection.engine;
+    spokenVoice = selection.voice;
+    cacheTag = { provider: selection.provider, model: selection.model };
+    warnings = [...selection.warnings];
+  }
+
   const mixer: VoiceMixer = input.mixer ?? createFfmpegMixer();
 
   mkdirSync(cacheDir, { recursive: true });
@@ -328,7 +355,10 @@ export async function buildVoiceTrack(input: VoiceTrackInput): Promise<VoiceTrac
   for (const cue of cues) {
     if (lines.has(cue.text)) continue;
     if (presenterWindowForCue(cue, windows)) continue;
-    lines.set(cue.text, await synthesiseLine(cue.text, voice, engine, cacheDir));
+    lines.set(
+      cue.text,
+      await synthesiseLine(cue.text, spokenVoice, engine, cacheDir, cacheTag),
+    );
   }
 
   const plan = buildVoicePlan({ cues, windows, lines, totalSec });
@@ -346,5 +376,5 @@ export async function buildVoiceTrack(input: VoiceTrackInput): Promise<VoiceTrac
   const captionsPath = join(outDir, 'captions.json');
   writeFileSync(captionsPath, `${JSON.stringify(plan.captions, null, 2)}\n`);
 
-  return { audioPath, captions: plan.captions, durationSec: totalSec };
+  return { audioPath, captions: plan.captions, durationSec: totalSec, warnings };
 }

@@ -12,6 +12,7 @@
 import { mkdir, open, readFile, rename, rm } from 'node:fs/promises';
 import { readFileSync, rmSync } from 'node:fs';
 import { dirname, join, resolve } from 'node:path';
+import { DEFAULT_VOICE_ID, isVoiceId } from '../../../services/voice/src/voices';
 import type { KeyStatus, SettingsSnapshot, Theme } from './contract';
 
 /** Stable failure codes; `E_KEY_STORAGE` is shown to the user verbatim. */
@@ -43,6 +44,8 @@ export interface SettingsPort {
   setTheme(theme: Theme): Promise<void>;
   setKey(key: string): Promise<void>;
   keyStatus(): Promise<KeyStatus>;
+  /** Persists the selected studio voice; unknown ids are rejected. */
+  setVoice(voiceId: string): Promise<void>;
   /**
    * The decrypted key this machine can use, or `undefined`. This is the only
    * way the rest of the app reaches the secret; it is never logged or returned
@@ -81,6 +84,7 @@ const MAX_KEY_LENGTH = 512;
 interface SettingsFile {
   version: 1;
   theme: Theme;
+  voiceId: string;
 }
 
 interface KeyFile {
@@ -97,35 +101,41 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
-async function readTheme(file: string): Promise<Theme> {
+const DEFAULT_SETTINGS: SettingsFile = {
+  version: 1,
+  theme: DEFAULT_THEME,
+  voiceId: DEFAULT_VOICE_ID,
+};
+
+/** Forgiving on read; every field falls back independently. */
+async function readSettings(file: string): Promise<SettingsFile> {
   let raw: string;
   try {
     raw = await readFile(file, 'utf8');
   } catch {
-    return DEFAULT_THEME;
+    return { ...DEFAULT_SETTINGS };
   }
 
   try {
     const parsed: unknown = JSON.parse(raw);
-    if (
-      typeof parsed === 'object' &&
-      parsed !== null &&
-      !Array.isArray(parsed) &&
-      isTheme((parsed as { theme?: unknown }).theme)
-    ) {
-      return (parsed as { theme: Theme }).theme;
+    if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
+      const record = parsed as { theme?: unknown; voiceId?: unknown };
+      return {
+        version: 1,
+        theme: isTheme(record.theme) ? record.theme : DEFAULT_THEME,
+        voiceId: isVoiceId(record.voiceId) ? record.voiceId : DEFAULT_VOICE_ID,
+      };
     }
   } catch {
-    // Corrupt settings are not fatal; fall through to the default.
+    // Corrupt settings are not fatal; fall through to the defaults.
   }
 
-  return DEFAULT_THEME;
+  return { ...DEFAULT_SETTINGS };
 }
 
-async function writeTheme(file: string, theme: Theme): Promise<void> {
+async function writeSettings(file: string, next: SettingsFile): Promise<void> {
   const tmp = `${file}.tmp`;
-  const data: SettingsFile = { version: 1, theme };
-  const json = `${JSON.stringify(data, null, 2)}\n`;
+  const json = `${JSON.stringify(next, null, 2)}\n`;
 
   await mkdir(dirname(file), { recursive: true });
 
@@ -284,12 +294,24 @@ export function createSettings(options: CreateSettingsOptions): SettingsPort {
 
   let pending: Promise<void> = Promise.resolve();
 
+  /** Serialise read-modify-write so two quick changes cannot interleave. */
+  const updateSettings = async (patch: Partial<Omit<SettingsFile, 'version'>>): Promise<void> => {
+    const write = pending.then(async () => {
+      const current = await readSettings(file);
+      await writeSettings(file, { ...current, ...patch, version: 1 });
+    });
+    pending = write.catch(() => undefined);
+    await write;
+  };
+
   return {
     async get(): Promise<SettingsSnapshot> {
+      const stored = await readSettings(file);
       return {
         dataDir,
         modelConfigured: await configured(),
-        theme: await readTheme(file),
+        theme: stored.theme,
+        voiceId: stored.voiceId,
         version,
         spendUsd: spent(),
       };
@@ -299,10 +321,16 @@ export function createSettings(options: CreateSettingsOptions): SettingsPort {
       if (!isTheme(theme)) {
         throw new RangeError(`Unknown theme "${String(theme)}"; expected light or dark.`);
       }
+      await updateSettings({ theme });
+    },
 
-      const write = pending.then(() => writeTheme(file, theme));
-      pending = write.catch(() => undefined);
-      await write;
+    async setVoice(voiceId: string): Promise<void> {
+      if (typeof voiceId !== 'string' || !isVoiceId(voiceId)) {
+        throw new RangeError(
+          `Unknown voice "${String(voiceId)}"; choose one from the voice gallery.`,
+        );
+      }
+      await updateSettings({ voiceId });
     },
 
     async setKey(key: string): Promise<void> {

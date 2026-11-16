@@ -16,6 +16,17 @@ export interface Candidate {
   /** Source seconds. */
   outSec: number;
   reason: string;
+  /**
+   * Measured motion energy, 0..1. Optional: a pool built without the analysis
+   * metrics still plans, it just cannot rank a hook by movement.
+   */
+  motion?: number;
+  /**
+   * Visible selling points from the tagging pass (`natural_light`, `open_plan`,
+   * `balcony_access`, …). Optional; the hook uses them only to break near-ties
+   * toward a shot with light or an outlook.
+   */
+  sellingPoints?: string[];
 }
 
 export interface Facts {

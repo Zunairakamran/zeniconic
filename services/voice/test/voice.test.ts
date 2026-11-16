@@ -408,6 +408,41 @@ describe('buildVoiceTrack', () => {
     }
   });
 
+  it('falls back to the offline voice with a warning when no studio key exists', async () => {
+    const root = tempRoot();
+    const listingDir = join(root, 'listing');
+    mkdirSync(listingDir, { recursive: true });
+
+    const edl = makeEdl({
+      words: timedWords([{ text: 'The presenter is talking.', startSec: 0.2 }]),
+      durationSec: 5,
+    });
+
+    const result = await buildVoiceTrack({
+      edl,
+      listingDir,
+      presenterClips: [
+        {
+          sourceId: 's_aaaa0001',
+          wav: join(root, 'presenter.wav'),
+          startSec: 0.5,
+          endSec: 3.5,
+          timelineStartSec: 0.2,
+        },
+      ],
+      provider: 'studio',
+      getOpenRouterKey: async () => undefined,
+      cacheDir: join(root, 'voice'),
+      outDir: join(root, 'out'),
+      music: null,
+      mixer: new FakeMixer(),
+    });
+
+    // The only line is presenter audio, so no Kokoro model is ever loaded.
+    expect(result.warnings).toHaveLength(1);
+    expect(result.warnings[0]).toContain('studio voice cannot be used');
+  });
+
   it('reads presenter windows from out/audio/speech.json', async () => {
     const root = tempRoot();
     const listingDir = join(root, 'listing');

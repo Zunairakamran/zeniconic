@@ -18,6 +18,17 @@ export interface RenderOptions {
   quality?: Quality;
   output: string;
   captionsPath?: string;
+  /**
+   * Extra video filters appended after the picture (and after libass captions).
+   * The marketing path uses this for its `drawtext` cards so picture,
+   * transitions, captions and overlays still render in one FFmpeg pass.
+   */
+  postFilters?: readonly string[];
+  /**
+   * `music` (default) maps the EDL music bed into the take. `none` produces a
+   * silent picture for a caller that masters audio in its own two-pass stage.
+   */
+  audio?: 'music' | 'none';
 }
 
 /**
@@ -35,6 +46,15 @@ function draftProfile(profile: RenderProfile): RenderProfile {
     width: halfEven(profile.width),
     height: halfEven(profile.height),
   };
+}
+
+/**
+ * The canvas a quality level actually encodes. `draft` is half size, and the
+ * caller that draws pixel-positioned text (marketing `drawtext`) must plan
+ * against this, not against the nominal profile.
+ */
+export function renderProfileFor(profile: RenderProfile, quality: Quality): RenderProfile {
+  return quality === 'draft' ? draftProfile(profile) : profile;
 }
 
 /** Buffer is two seconds of peak bitrate, as in the §3 encode recipe. */
@@ -72,12 +92,13 @@ export function buildRenderArgs(
 
   const quality: Quality = options.quality ?? 'standard';
   const isDraft = quality === 'draft';
-  const target = isDraft ? draftProfile(profile) : profile;
+  const target = renderProfileFor(profile, quality);
 
   const videoPaths = uniquePaths(edl.clips.map((clip) => clip.src));
   const musicSrc = edl.audio.music.src.trim();
-  const inputPaths = uniquePaths(musicSrc.length > 0 ? [...videoPaths, musicSrc] : videoPaths);
-  const musicIndex = musicSrc.length > 0 ? inputPaths.indexOf(musicSrc) : -1;
+  const withMusic = options.audio !== 'none' && musicSrc.length > 0;
+  const inputPaths = uniquePaths(withMusic ? [...videoPaths, musicSrc] : videoPaths);
+  const musicIndex = withMusic ? inputPaths.indexOf(musicSrc) : -1;
 
   // One graph, one duration. `-t` comes from the same plan that wrote the
   // xfade offsets, so an overlap can never be counted twice or omitted.
@@ -85,6 +106,7 @@ export function buildRenderArgs(
     edl,
     target,
     options.captionsPath,
+    options.postFilters,
   );
 
   const args: string[] = ['-y', '-hide_banner'];

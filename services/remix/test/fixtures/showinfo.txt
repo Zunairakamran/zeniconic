@@ -1,0 +1,28 @@
+ffmpeg version 6.1.1 Copyright (c) 2000-2023 the FFmpeg developers
+  built with gcc 13.2.0 (GCC)
+  configuration: --enable-gpl --enable-libx264
+  libavutil      58. 29.100 / 58. 29.100
+  libavcodec     60. 31.102 / 60. 31.102
+  libavformat    60. 16.100 / 60. 16.100
+Input #0, mov,mp4,m4a,3gp,3g2,mj2, from 'imports/14-oak-avenue.mp4':
+  Metadata:
+    major_brand     : isom
+    minor_version   : 512
+    compatible_brands: isomiso2avc1mp41
+  Duration: 00:00:24.00, start: 0.000000, bitrate: 4218 kb/s
+  Stream #0:0[0x1](und): Video: h264 (High), yuv420p(tv, bt709, progressive), 1920x1080 [SAR 1:1 DAR 16:9], 30 fps, 30 tbr, 15360 tbn (default)
+  Stream #0:1[0x2](und): Audio: aac (LC), 48000 Hz, stereo, fltp, 128 kb/s (default)
+Stream mapping:
+  Stream #0:0 -> #0:0 (h264 (native) -> wrapped_avframe (native))
+Press [q] to stop, [?] for help
+[Parsed_showinfo_1 @ 0000028f4c0b8040] config in time_base: 1/15360, frame_rate: 30/1
+[Parsed_showinfo_1 @ 0000028f4c0b8040] n:  45 pts:  23040 pts_time:1.5    pos:   284116 fmt:yuv420p sar:1/1 s:1920x1080 i:P iskey:0 type:P checksum:...
+[Parsed_showinfo_1 @ 0000028f4c0b8040] n: 127 pts:  65024 pts_time:4.233  pos:   781224 fmt:yuv420p sar:1/1 s:1920x1080 i:P iskey:0 type:P checksum:...
+[Parsed_showinfo_1 @ 0000028f4c0b8040] n: 128 pts:  65536 pts_time:4.266  pos:   786540 fmt:yuv420p sar:1/1 s:1920x1080 i:P iskey:0 type:P checksum:...
+[Parsed_showinfo_1 @ 0000028f4c0b8040] n: 137 pts:  70144 pts_time:4.566  pos:   841220 fmt:yuv420p sar:1/1 s:1920x1080 i:P iskey:0 type:P checksum:...
+[Parsed_showinfo_1 @ 0000028f4c0b8040] n: 270 pts: 138240 pts_time:9.0    pos:  1658004 fmt:yuv420p sar:1/1 s:1920x1080 i:P iskey:1 type:I checksum:...
+[Parsed_showinfo_1 @ 0000028f4c0b8040] n: 375 pts: 192000 pts_time:12.5   pos:  2301188 fmt:yuv420p sar:1/1 s:1920x1080 i:P iskey:0 type:P checksum:...
+[Parsed_showinfo_1 @ 0000028f4c0b8040] n: 381 pts: 195072 pts_time:12.7   pos:  2339640 fmt:yuv420p sar:1/1 s:1920x1080 i:P iskey:0 type:P checksum:...
+[Parsed_showinfo_1 @ 0000028f4c0b8040] n: 540 pts: 276480 pts_time:18.0   pos:  3315060 fmt:yuv420p sar:1/1 s:1920x1080 i:P iskey:1 type:I checksum:...
+frame=  720 fps= 96 q=-0.0 Lsize=N/A time=00:00:24.00 bitrate=N/A speed=3.2x
+video:0kB audio:0kB subtitle:0kB other streams:0kB global headers:0kB muxing overhead: unknown

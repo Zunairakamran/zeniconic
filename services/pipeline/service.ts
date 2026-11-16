@@ -11,7 +11,7 @@ import { dirname } from 'node:path';
 import { ffmpegPath } from '../../packages/media/src/index';
 import { buildRenderArgs, PROFILES } from '../../packages/render/src/index';
 import type { ProfileId, Quality } from '../../packages/render/src/index';
-import { planVariant } from '../../packages/planner/src/index';
+import { planRequest } from '../../packages/planner/src/index';
 import type { Candidate, Facts, PlanRequest } from '../../packages/planner/src/index';
 import type { Edl, LookId, Room, SafeArea } from '../../packages/edl/src/index';
 import { collectVideos, indexFiles } from './indexer';
@@ -57,6 +57,11 @@ export interface BuildRequestInput {
   targetSec: number;
   /** Creative direction; defaults to `calm`. */
   look?: LookId;
+  /**
+   * Format to plan. `marketing_38` uses its own campaign sheet; every other
+   * value keeps the room-order planner. Defaults to `cinematic_hero`.
+   */
+  format?: 'cinematic_hero' | 'marketing_38';
   /** Stable tie-break seed; defaults to one derived from the listing id. */
   seed?: number;
   /** ISO timestamp, injected for determinism. */
@@ -219,27 +224,50 @@ function scoreShot(metrics: IndexedShot['metrics']): number {
 }
 
 /**
- * The heuristic candidate pool: room from the filename, score from blur, shake
- * and exposure clipping. Deterministic for a given index — the fallback room
- * cycles per call, not per module load.
+ * Motion energy as a 0..1 signal. The measured values sit between roughly
+ * 0.003 (a locked-off frame) and 0.12 (a fast pan); 0.15 is the practical
+ * ceiling, so the marketing hook can rank "moving" above "still" without a
+ * second unit.
+ */
+const MOTION_REFERENCE = 0.15;
+
+function motionOf(metrics: IndexedShot['metrics']): number {
+  return Math.round(clamp(metrics.motionEnergy / MOTION_REFERENCE, 0, 1) * 1000) / 1000;
+}
+
+/**
+ * The heuristic candidate pool.
+ *
+ * A shot's vision tag wins over its filename: the tagged index knows a
+ * `living` shot even when the file is called `WhatsApp Video …`. Filenames are
+ * the fallback for an untagged shot, and the cycling room list is the last
+ * resort. Scores come from the tag when present, otherwise from blur, shake and
+ * exposure clipping. Deterministic for a given index — the fallback room cycles
+ * per call, not per module load.
  */
 export function buildCandidates(index: FootageIndex): Candidate[] {
   const candidates: Candidate[] = [];
   let fallback = 0;
 
   for (const clip of index.clips) {
-    const matched = ROOM_WORDS.find(([pattern]) => pattern.test(clip.name))?.[1];
+    const filenameRoom = ROOM_WORDS.find(([pattern]) => pattern.test(clip.name))?.[1];
     for (const shot of clip.shots) {
       if (!(shot.durationSec > 0)) continue;
-      const room = matched ?? FALLBACK_ROOMS[fallback++ % FALLBACK_ROOMS.length] ?? 'unknown';
+      const tagged = shot.tags;
+      const room = tagged?.room ?? filenameRoom ?? FALLBACK_ROOMS[fallback++ % FALLBACK_ROOMS.length] ?? 'unknown';
       candidates.push({
         shotId: shot.id,
         sourceId: clip.id,
         src: clip.file,
         room,
-        score: scoreShot(shot.metrics),
+        score:
+          tagged === undefined
+            ? scoreShot(shot.metrics)
+            : Math.round(clamp(tagged.score / 100, 0, 1) * 1000) / 1000,
         inSec: shot.startSec,
         outSec: shot.endSec,
+        motion: motionOf(shot.metrics),
+        ...(tagged === undefined ? {} : { sellingPoints: [...tagged.sellingPoints] }),
         reason: `measured: blur ${shot.metrics.blur.toFixed(2)}, shake ${shot.metrics.shake.toFixed(2)}`,
       });
     }
@@ -268,20 +296,24 @@ function seedFor(value: string): number {
  * same way every time.
  */
 export function buildRequest(input: BuildRequestInput): PlanRequest {
-  const target = input.targetSec;
-  if (!Number.isFinite(target) || target < 5 || target > 90) {
+  const requested = input.targetSec;
+  if (!Number.isFinite(requested) || requested < 5 || requested > 90) {
     throw new PipelineError(
       'E_ARGUMENT',
-      `Target duration must be between 5 and 90 seconds, not ${String(target)}.`,
+      `Target duration must be between 5 and 90 seconds, not ${String(requested)}.`,
     );
   }
 
   const look = input.look ?? 'calm';
   const lookLabel = look.charAt(0).toUpperCase() + look.slice(1);
+  const format = input.format ?? 'cinematic_hero';
+  const formatLabel = format === 'marketing_38' ? 'Marketing 38' : 'Cinematic hero';
+  // The marketing sheet owns its length: 38.000 s is the format, not a knob.
+  const target = format === 'marketing_38' ? 38 : requested;
 
   return {
     listingId: input.listingId,
-    format: { id: 'cinematic_hero', label: 'Cinematic hero', targetDurationSec: target },
+    format: { id: format, label: formatLabel, targetDurationSec: target },
     look: { id: look, label: lookLabel },
     profile: input.profile,
     canvas: defaultCanvas(input.profile),
@@ -301,7 +333,7 @@ export function buildRequest(input: BuildRequestInput): PlanRequest {
 
 /** Plans one deterministic variant; the planner asserts the EDL invariants. */
 export function planEdl(request: PlanRequest): Edl {
-  return planVariant(request);
+  return planRequest(request);
 }
 
 // ---------------------------------------------------------------------------

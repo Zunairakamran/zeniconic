@@ -310,10 +310,12 @@ export function planDrawTexts(input: {
 
   const addressOverlay = input.edl.overlays.find((overlay) => overlay.kind === 'address');
   const priceOverlay = input.edl.overlays.find((overlay) => overlay.kind === 'price');
+  const lowerThirdOverlay = input.edl.overlays.find((overlay) => overlay.kind === 'lower_third');
 
   const addressText = (addressOverlay?.text ?? input.facts?.address ?? '').trim();
   const priceText = (priceOverlay?.text ?? displayPrice(input.facts)).trim();
   const specText = (priceOverlay?.subtext ?? specRow(input.facts)).trim();
+  const entranceText = (lowerThirdOverlay?.text ?? '').trim();
   const agentText = (input.brand?.agentName ?? '').trim();
   const permitText = input.brand?.orn?.trim()
     ? `ORN ${input.brand.orn.trim()}`
@@ -434,6 +436,39 @@ export function planDrawTexts(input: {
       y: safeArea.top + Math.round(8 * scale),
       shadow: true,
     });
+  }
+
+  // The marketing entrance claim sits in the lower third, above the caption
+  // line and inside the safe area. It is the one text layer the campaign sheet
+  // adds beyond the fact cards.
+  if (entranceText.length > 0 && lowerThirdOverlay !== undefined) {
+    const entranceSize = Math.max(16, Math.round(54 * scale));
+    const entranceWindow = windowOf(lowerThirdOverlay, 0.4, Math.min(4.4, total), total);
+    if (entranceWindow.outSec > entranceWindow.inSec) {
+      const bottomEdge = height - safeArea.bottom;
+      const captionSize = Math.max(12, Math.round(CAPTION_SIZE_BASE * scale));
+      const captionBlock = Math.round(
+        CAPTION_MAX_LINES * captionSize * CAPTION_LINE_HEIGHT + 8 * scale,
+      );
+      const preferred = Math.round(height * 0.52);
+      const entranceY = clamp(
+        preferred,
+        safeArea.top,
+        Math.max(safeArea.top, bottomEdge - captionBlock - entranceSize),
+      );
+      specs.push({
+        id: 'entrance',
+        text: fitText(entranceText.toUpperCase(), entranceSize, maxColumn),
+        ...entranceWindow,
+        fontSize: entranceSize,
+        colour: PAPER,
+        opacity: 0.96,
+        align: 'left',
+        x: safeArea.left,
+        y: entranceY,
+        shadow: true,
+      });
+    }
   }
 
   return specs;

@@ -22,6 +22,7 @@ import {
   checkFrames,
   checkHook,
   checkLoudness,
+  checkMarketingBeats,
   checkNoRepeatedShot,
   checkRoomOrder,
   checkSafeArea,
@@ -248,6 +249,11 @@ export function buildFeedback(
             : 'put the confirmed address on screen in the opening card, exactly as the facts record it',
         );
         break;
+      case 'marketing_beats':
+        fixes.push(
+          'hold the marketing sheet: a moving living hook, the entrance reveal inside 23-28.5 s, and the price only after 28.5 s',
+        );
+        break;
       default:
         break;
     }
@@ -341,6 +347,10 @@ export async function reviewRender(input: ReviewInput, deps: ReviewDeps): Promis
   checks.push(checkRoomOrder(input.edl));
   checks.push(checkNoRepeatedShot(input.edl));
   checks.push(checkFacts(input.edl, input.facts));
+  // The marketing sheet gates on beats instead of room order. It is appended
+  // only for that format so every other cut keeps the ten schema checks.
+  const marketingBeats = checkMarketingBeats(input.edl);
+  if (marketingBeats !== undefined) checks.push(marketingBeats);
 
   const failed = checks.filter((check) => !check.passed);
   const hardFailed = failed.some((check) => HARD_CHECKS.includes(check.id));

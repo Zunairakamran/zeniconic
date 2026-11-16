@@ -1,0 +1,120 @@
+{
+  "version": 1,
+  "line": "Some mornings, the city is still asleep. This is above it.",
+  "generatedAt": "2026-11-16T14:51:47.040Z",
+  "voices": [
+    {
+      "id": "matilda",
+      "name": "Matilda",
+      "accent": "British",
+      "tone": [
+        "warm",
+        "calm",
+        "refined"
+      ],
+      "gender": "female",
+      "file": "matilda.mp3",
+      "bytes": 54902,
+      "durationSec": 4.494
+    },
+    {
+      "id": "sarah",
+      "name": "Sarah",
+      "accent": "American",
+      "tone": [
+        "soft",
+        "friendly",
+        "clear"
+      ],
+      "gender": "female",
+      "file": "sarah.mp3",
+      "bytes": 55842,
+      "durationSec": 4.572
+    },
+    {
+      "id": "alice",
+      "name": "Alice",
+      "accent": "British",
+      "tone": [
+        "confident",
+        "bright",
+        "crisp"
+      ],
+      "gender": "female",
+      "file": "alice.mp3",
+      "bytes": 54902,
+      "durationSec": 4.494
+    },
+    {
+      "id": "bella",
+      "name": "Bella",
+      "accent": "American",
+      "tone": [
+        "warm",
+        "gentle",
+        "intimate"
+      ],
+      "gender": "female",
+      "file": "bella.mp3",
+      "bytes": 54902,
+      "durationSec": 4.494
+    },
+    {
+      "id": "jessica",
+      "name": "Jessica",
+      "accent": "American",
+      "tone": [
+        "expressive",
+        "upbeat",
+        "social"
+      ],
+      "gender": "female",
+      "file": "jessica.mp3",
+      "bytes": 55842,
+      "durationSec": 4.572
+    },
+    {
+      "id": "lily",
+      "name": "Lily",
+      "accent": "British",
+      "tone": [
+        "warm",
+        "youthful",
+        "bright"
+      ],
+      "gender": "female",
+      "file": "lily.mp3",
+      "bytes": 57723,
+      "durationSec": 4.729
+    },
+    {
+      "id": "george",
+      "name": "George",
+      "accent": "British",
+      "tone": [
+        "warm",
+        "assured",
+        "measured"
+      ],
+      "gender": "male",
+      "file": "george.mp3",
+      "bytes": 54902,
+      "durationSec": 4.494
+    },
+    {
+      "id": "daniel",
+      "name": "Daniel",
+      "accent": "British",
+      "tone": [
+        "authoritative",
+        "crisp",
+        "newsreader"
+      ],
+      "gender": "male",
+      "file": "daniel.mp3",
+      "bytes": 55842,
+      "durationSec": 4.572
+    }
+  ],
+  "missing": []
+}

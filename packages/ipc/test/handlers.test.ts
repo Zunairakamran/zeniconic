@@ -823,6 +823,100 @@ describe('voice model', () => {
   });
 });
 
+describe('voice gallery channels', () => {
+  it('lists the catalogue with no samples when the build has no gallery port', async () => {
+    const voices = await handlers['voice:list']();
+    expect(voices).toHaveLength(21);
+    expect(voices[0]).toMatchObject({
+      id: 'matilda',
+      name: 'Matilda',
+      accent: 'British',
+      gender: 'female',
+      sampleId: 'matilda',
+    });
+    expect(voices[0]?.tone.length).toBeGreaterThan(0);
+    expect(voices.every((voice) => voice.sampleUrl === undefined)).toBe(true);
+  });
+
+  it('strips a path or a non-audio URL from a gallery entry', async () => {
+    const local = createHandlers({
+      store,
+      runner,
+      pipeline,
+      settings,
+      voiceGallery: {
+        list: async () => [
+          {
+            id: 'matilda',
+            name: 'Matilda',
+            accent: 'British',
+            tone: ['warm'],
+            gender: 'female',
+            sampleId: 'matilda',
+            sampleUrl: 'C:/Windows/System32/secret.mp3',
+          },
+          {
+            id: 'not-a-voice',
+            name: 'Fake',
+            accent: 'None',
+            tone: [],
+            gender: 'female',
+            sampleId: 'not-a-voice',
+            sampleUrl: 'data:audio/mpeg;base64,AAAA',
+          },
+          {
+            id: 'sarah',
+            name: 'Sarah',
+            accent: 'American',
+            tone: ['soft'],
+            gender: 'female',
+            sampleId: 'sarah',
+            sampleUrl: 'data:audio/mpeg;base64,AAAA',
+            bytes: 3,
+          },
+        ],
+      },
+    });
+
+    const voices = await local['voice:list']();
+    expect(voices.map((voice) => voice.id)).toEqual(['matilda', 'sarah']);
+    expect(voices[0]?.sampleUrl).toBeUndefined();
+    expect(voices[1]?.sampleUrl).toBe('data:audio/mpeg;base64,AAAA');
+  });
+
+  it('persists a known voice and rejects anything else', async () => {
+    await handlers['voice:setVoice']('george');
+    expect(settings.voiceIds).toEqual(['george']);
+    expect(settings.voiceId).toBe('george');
+
+    await expect(handlers['voice:setVoice']('../secrets')).rejects.toMatchObject({
+      code: 'E_INVALID_INPUT',
+    });
+    await expect(handlers['voice:setVoice']('unknown')).rejects.toMatchObject({
+      code: 'E_INVALID_INPUT',
+    });
+    expect(settings.voiceIds).toEqual(['george']);
+  });
+
+  it('wraps a gallery failure with a typed code', async () => {
+    const local = createHandlers({
+      store,
+      runner,
+      pipeline,
+      settings,
+      voiceGallery: {
+        list: async () => {
+          throw new Error('samples folder unreadable');
+        },
+      },
+    });
+    await expect(local['voice:list']()).rejects.toMatchObject({
+      code: 'E_VOICE',
+      message: 'samples folder unreadable',
+    });
+  });
+});
+
 describe('channel contract', () => {
   /**
    * Declared arity per channel. A handler that grows a parameter the contract
@@ -847,6 +941,8 @@ describe('channel contract', () => {
     'settings:setTheme': 1,
     'settings:setKey': 1,
     'settings:keyStatus': 0,
+    'voice:list': 0,
+    'voice:setVoice': 1,
     'shell:openPath': 1,
     'voice:modelStatus': 0,
     'voice:modelDownload': 0,

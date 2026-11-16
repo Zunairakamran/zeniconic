@@ -24,7 +24,8 @@ export type CheckId =
   | 'loudness'
   | 'no_repeated_shot'
   | 'hook_visible'
-  | 'facts_present';
+  | 'facts_present'
+  | 'marketing_beats';
 
 export interface CheckResult {
   id: CheckId;

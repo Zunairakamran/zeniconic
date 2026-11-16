@@ -33,6 +33,7 @@ export type {
   VoiceMode,
   VoiceModelPhase,
   VoiceModelStatus,
+  VoiceOption,
 } from './contract';
 
 export { CHANNELS, JOB_PROGRESS_CHANNEL, isChannel } from './contract';
@@ -46,6 +47,7 @@ export type {
   RunnerPort,
   SettingsPortLike,
   StorePort,
+  VoiceGalleryPort,
   VoiceModelPort,
 } from './handlers';
 

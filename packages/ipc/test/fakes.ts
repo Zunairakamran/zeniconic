@@ -215,8 +215,10 @@ export class FakeSettings implements SettingsPortLike {
   theme: Theme = 'light';
   readonly themes: Theme[] = [];
   readonly keys: string[] = [];
+  readonly voiceIds: string[] = [];
   dataDir = 'D:/video/data';
   configured = true;
+  voiceId = 'matilda';
   version = '0.1.0';
   spendUsd = 1.84;
 
@@ -225,6 +227,7 @@ export class FakeSettings implements SettingsPortLike {
       dataDir: this.dataDir,
       modelConfigured: this.configured,
       theme: this.theme,
+      voiceId: this.voiceId,
       version: this.version,
       spendUsd: this.spendUsd,
     };
@@ -242,6 +245,11 @@ export class FakeSettings implements SettingsPortLike {
 
   async keyStatus(): Promise<KeyStatus> {
     return { configured: this.configured };
+  }
+
+  async setVoice(voiceId: string): Promise<void> {
+    this.voiceIds.push(voiceId);
+    this.voiceId = voiceId;
   }
 }
 

@@ -24,9 +24,15 @@ import type {
   VariantSummary,
   VoiceMode,
   VoiceModelStatus,
+  VoiceOption,
 } from '../../../packages/ipc/src/index';
 import type { JobRecord } from '../../../packages/jobs/src/index';
 import type { Facts, ListingRecord } from '../../../packages/store/src/index';
+import {
+  DEFAULT_VOICE_ID,
+  VOICE_CATALOG,
+  isVoiceId,
+} from '../../../services/voice/src/voices';
 import { listings as demoListings, variants as demoVariants } from './demo';
 import type { Listing, Variant } from './types';
 
@@ -151,9 +157,23 @@ function demoUpdateFacts(listingId: string, patch: Partial<Facts>): ListingRecor
 
 const demoVariantState = new Map<string, VariantSummary[]>();
 let demoKeyConfigured = false;
+let demoVoiceId = DEFAULT_VOICE_ID;
 /** Browser-preview stand-in for the Kokoro download; the desktop owns the real one. */
 let demoVoiceInstalled = false;
 const DEMO_VOICE_TOTAL = 92_364_770;
+
+/** Metadata-only: the browser bundle ships no audio samples. */
+function demoVoiceGallery(): VoiceOption[] {
+  return VOICE_CATALOG.map((voice) => ({
+    id: voice.id,
+    name: voice.name,
+    accent: voice.accent,
+    tone: [...voice.tone],
+    gender: voice.gender,
+    sampleId: voice.id,
+  }));
+}
+
 const demoTracks = {
   voiceModel(): VoiceModelStatus {
     return {
@@ -380,6 +400,10 @@ export interface ZeniconicApi {
     modelStatus(): Promise<VoiceModelStatus>;
     downloadModel(): Promise<VoiceModelStatus>;
     cancelModel(): Promise<VoiceModelStatus>;
+    /** Catalogue and bundled previews. */
+    list(): Promise<VoiceOption[]>;
+    /** Persists the selected studio voice. */
+    setVoice(voiceId: string): Promise<void>;
   };
   onJobProgress(listener: (event: JobProgressEvent) => void): () => void;
 }
@@ -516,6 +540,7 @@ export const api: ZeniconicApi = {
         dataDir: DEMO_DATA_DIR,
         modelConfigured: demoKeyConfigured,
         theme: demoTheme,
+        voiceId: demoVoiceId,
         version: DEMO_VERSION,
         spendUsd: DEMO_SPEND_USD,
       };
@@ -575,6 +600,22 @@ export const api: ZeniconicApi = {
       if (desktop) return desktop.invoke('voice:modelCancel');
       return demoTracks.voiceModel();
     },
+
+    async list() {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('voice:list');
+      return demoVoiceGallery();
+    },
+
+    async setVoice(voiceId) {
+      const desktop = bridge();
+      if (desktop) {
+        await desktop.invoke('voice:setVoice', voiceId);
+        return;
+      }
+      if (!isVoiceId(voiceId)) throw new Error('Choose a voice from the gallery.');
+      demoVoiceId = voiceId;
+    },
   },
 
   onJobProgress(listener) {
@@ -599,4 +640,5 @@ export type {
   VariantSummary,
   VoiceMode,
   VoiceModelStatus,
+  VoiceOption,
 };

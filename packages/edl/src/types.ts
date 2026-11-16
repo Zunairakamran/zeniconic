@@ -47,7 +47,8 @@ export type FormatId =
   | 'agent_intro'
   | 'before_after'
   | 'drone_hero'
-  | 'vertical_tour';
+  | 'vertical_tour'
+  | 'marketing_38';
 
 export interface FormatRef {
   id: FormatId;
@@ -67,7 +68,19 @@ export interface LookRef {
 // Clips
 // ---------------------------------------------------------------------------
 
-export type TransitionType = 'cut' | 'dissolve' | 'slide' | 'whip';
+/**
+ * `zoom_blur`, `luma_wipe` and `light_leak` are the marketing-campaign
+ * transitions. They map onto `xfade` (`zoomin`, `hblur`, `radial`) exactly like
+ * the original four, so an EDL stays renderer-neutral.
+ */
+export type TransitionType =
+  | 'cut'
+  | 'dissolve'
+  | 'slide'
+  | 'whip'
+  | 'zoom_blur'
+  | 'luma_wipe'
+  | 'light_leak';
 
 export interface Transition {
   type: TransitionType;
@@ -117,6 +130,19 @@ export interface Clip {
   transform: Transform;
   transitionIn: Transition;
   transitionOut?: Transition;
+  /**
+   * Source seconds the renderer may borrow *past* `outSec` to feed the
+   * outgoing transition. Transition handles are not part of the timeline: the
+   * assembled film still runs `outSec - inSec` per clip, and `xfade` consumes
+   * the handle instead of shortening the cut.
+   */
+  handleOutSec?: number;
+  /**
+   * Motion energy measured on the source shot, 0..1. Optional because only the
+   * formats that gate on motion (marketing) need it; a missing value is not
+   * the same as zero motion.
+   */
+  motionAtSelection?: number;
   reason: string;
   scoreAtSelection?: number;
 }
@@ -259,7 +285,8 @@ export type ReviewCheckId =
   | 'loudness'
   | 'no_repeated_shot'
   | 'hook_visible'
-  | 'facts_present';
+  | 'facts_present'
+  | 'marketing_beats';
 
 export interface ReviewCheck {
   id: ReviewCheckId;
