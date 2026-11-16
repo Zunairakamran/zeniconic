@@ -634,7 +634,26 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       const message = requireChatMessage(raw.message);
       await requireListing(store, listingId);
       const service = requireChat(chat);
-      return viaChat(() => service.send({ listingId, variantId, message }));
+      const result = await viaChat(() => service.send({ listingId, variantId, message }));
+      if (
+        !isRecord(result) ||
+        typeof result.reply !== 'string' ||
+        typeof result.diff !== 'string' ||
+        typeof result.versionId !== 'string'
+      ) {
+        throw new IpcError('E_CHAT', 'The assistant did not return a usable edit.');
+      }
+      return {
+        reply: result.reply,
+        diff: result.diff,
+        versionId: result.versionId,
+        warnings: Array.isArray(result.warnings)
+          ? result.warnings.filter(
+              (warning): warning is string =>
+                typeof warning === 'string' && warning.trim().length > 0,
+            )
+          : [],
+      };
     },
 
     'chat:apply': async (input): Promise<ChatApplyResult> => {

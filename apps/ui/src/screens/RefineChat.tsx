@@ -161,7 +161,7 @@ export function RefineChatScreen({
   };
 
   const applyEdit = async (entry: AssistantEntry) => {
-    if (entry.applied || applyingVersion !== undefined) return;
+    if (entry.applied || sending || applyingVersion !== undefined) return;
     setApplyingVersion(entry.versionId);
     setError(undefined);
 
@@ -539,7 +539,7 @@ export function RefineChatScreen({
                       <Button
                         size="sm"
                         variant="primary"
-                        disabled={entry.applied || applyingVersion !== undefined}
+                        disabled={entry.applied || sending || applyingVersion !== undefined}
                         onClick={() => void applyEdit(entry)}
                       >
                         {entry.applied

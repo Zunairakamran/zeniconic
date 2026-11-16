@@ -40,7 +40,7 @@ export interface VariantSummary {
   clipCount: number;
   /** 0..100, mean of the selected shots' planner scores. */
   score: number;
-  /** Absolute path to `<listing>/variants/<look>.json`. */
+  /** Stored EDL path, relative to the listing workspace (`variants/calm.json`). */
   edlPath: string;
   approved: boolean;
 }

@@ -110,6 +110,8 @@ const REQUIRED_OVERLAY_KINDS: readonly OverlayKind[] = ['price', 'disclaimer'];
 const MAX_CONTEXT_CHARS = 16_000;
 const MAX_CANDIDATES = 120;
 const MAX_MESSAGE_LENGTH = 2_000;
+/** A repair turn re-sends the rejected reply; cap it so a rogue provider cannot blow the prompt. */
+const MAX_REPLY_CHARS = 4_000;
 const MAX_MODEL_ATTEMPTS = 2;
 const MAX_TOKENS = 1_600;
 
@@ -193,7 +195,7 @@ ${ALLOWED_PATHS}
 6. Timestamps must stay inside a candidate shot's [in, out] window. Do not invent times.
 7. Prefer the smallest edit that satisfies the request. Do not restate the whole EDL.
 8. "reply" is what the agent reads before the diff. Say what changes, not how the JSON works. No markdown, no code fences.
-9. If the request cannot be done safely, return a reply that says so and one harmless no-op-looking operation is NOT allowed. Never return an empty list; explain instead with a minimal valid edit only when one exists.`;
+9. If the request cannot be made safely, return the closest safe edit you can and say what you left alone. Never return an empty operations list.`;
 
 // ---------------------------------------------------------------------------
 // Small helpers
@@ -426,14 +428,23 @@ function guardrails(
   const violations: GuardrailViolation[] = [];
 
   // 1. A clip source may only change to a file the footage index knows about.
-  //    Existing sources are allowed so an unchanged clip is never rejected.
-  const allowedSources = new Set<string>([
-    ...candidates.map((candidate) => srcKey(candidate.src)),
-    ...before.clips.map((item) => srcKey(item.src)),
-  ]);
+  //    Unchanged clips are skipped below, so an existing source that predates
+  //    the index does not need to be in this set.
+  const allowedSources = new Set<string>(
+    candidates.map((candidate) => srcKey(candidate.src)),
+  );
   const beforeById = new Map(before.clips.map((item) => [item.id, item]));
 
   for (const item of after.clips) {
+    // A malformed replacement is reported by `validateEdl`; do not let it
+    // crash the guardrail pass first.
+    if (
+      !isRecord(item) ||
+      typeof item.id !== 'string' ||
+      typeof item.src !== 'string'
+    ) {
+      continue;
+    }
     const previous = beforeById.get(item.id);
     if (previous !== undefined && srcKey(previous.src) === srcKey(item.src)) continue;
     if (!allowedSources.has(srcKey(item.src))) {
@@ -750,7 +761,7 @@ class DesktopChatService implements ChatService {
       } catch (error) {
         if (error instanceof AiError && error.code === 'E_JSON') {
           lastReason = error.message;
-          messages.push({ role: 'assistant', content: text });
+          messages.push({ role: 'assistant', content: text.slice(0, MAX_REPLY_CHARS) });
           messages.push({ role: 'user', content: repairMessage(lastReason) });
           retried = true;
           continue;
@@ -761,7 +772,7 @@ class DesktopChatService implements ChatService {
       const outcome = evaluateEdit(before, edit.operations, candidates);
       if (!outcome.ok) {
         lastReason = outcome.reason;
-        messages.push({ role: 'assistant', content: text });
+        messages.push({ role: 'assistant', content: text.slice(0, MAX_REPLY_CHARS) });
         messages.push({ role: 'user', content: repairMessage(lastReason) });
         retried = true;
         continue;
@@ -861,7 +872,13 @@ class DesktopChatService implements ChatService {
       const variant = await this.requireVariant(listingDir, input.variantId);
       const history = await readVersionsFile(manifestPath(listingDir, variant.look));
       const record = history.versions.find((item) => item.id === input.versionId);
-      if (record === undefined) {
+      const number = versionNumber(input.versionId);
+      if (
+        record === undefined ||
+        number === null ||
+        !input.versionId.startsWith(`${variant.look}-v`) ||
+        record.path !== storedVersionPath(variant.look, number)
+      ) {
         throw new ChatError(
           'E_CHAT_NOT_FOUND',
           'That version no longer exists. Ask for the change again.',
