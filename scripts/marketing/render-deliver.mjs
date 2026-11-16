@@ -223,7 +223,7 @@ function render(name, voices, variant) {
   parts.push(`[vB]apad=whole_dur=${total.toFixed(3)}[vBp]`);
   parts.push('[mus][vBp]sidechaincompress=threshold=0.02:ratio=6:attack=15:release=300[duck]');
   parts.push('[vA][duck]amix=inputs=2:normalize=0:duration=longest,loudnorm=I=-14:TP=-2:LRA=11,alimiter=limit=0.75:level=false[aout]');
-  parts.push(`[0:v]vignette,subtitles=data/marketing/work/deliver/${name}.ass:fontsdir=apps/desktop/electron/assets/fonts[vout]`);
+  parts.push(`[0:v]tpad=stop_mode=clone:stop_duration=${pad.toFixed(3)},vignette,subtitles=data/marketing/work/deliver/${name}.ass:fontsdir=apps/desktop/electron/assets/fonts[vout]`);
 
   const file = resolve(outDir, `${name}.mp4`);
   execFileSync(ffmpeg, [
