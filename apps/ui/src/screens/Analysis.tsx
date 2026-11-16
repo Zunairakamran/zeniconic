@@ -2,7 +2,6 @@ import type { ScreenProps } from '../types';
 import { Button, Card, Eyebrow, Icon, Progress } from '../ui';
 import './Analysis.css';
 
-const totalShots = 24;
 const revealedOnOpen = 6;
 
 const IDLE_STAGES = [
@@ -46,6 +45,8 @@ export function AnalysisScreen({
 }: ScreenProps) {
   const failed = analysisError !== undefined;
   const hasJob = progress !== undefined || analysisJobId !== undefined;
+  // The contact sheet counts the shots the index actually produced.
+  const totalShots = candidates.length > 0 ? candidates.length : 18;
 
   // A direct `#analysis` load has no job to wait for. Say so and offer the two
   // actions that can actually move the user forward instead of spinning at 0%.
@@ -147,7 +148,7 @@ export function AnalysisScreen({
         <div className="analysis-head__titles">
           <Eyebrow>{progress === undefined ? 'Preparing job' : `Job ${progress.jobId}`}</Eyebrow>
           <h1>Analysing {listing.address}</h1>
-          <p className="analysis-sub">
+          <p className="analysis-sub" role={failed ? 'alert' : undefined}>
             {failed ? analysisError : stageDetail}
           </p>
         </div>
@@ -157,10 +158,6 @@ export function AnalysisScreen({
             <span className="caps">Progress</span>
             <b className="mono">{Math.round(percent)}%</b>
           </div>
-          <Button type="button" variant="ghost" onClick={() => undefined}>
-            <span className="analysis-stop-icon" aria-hidden="true" />
-            Stop analysis
-          </Button>
           {done ? (
             <Button type="button" variant="primary" onClick={() => onNavigate('variants')}>
               Review variants
@@ -319,20 +316,20 @@ export function AnalysisScreen({
             <div className="analysis-safe">
               <Icon name="check" size={15} />
               <div>
-                <b>Safe to close — we&apos;ll notify you.</b>
-                <span>Analysis resumes where it stopped if the app quits.</span>
+                <b>Safe to close — analysis resumes when you reopen.</b>
+                <span>Analysis continues from the stage it reached.</span>
               </div>
             </div>
 
             <div className="analysis-budget">
               <div>
-                <span className="caps">Budget left</span>
-                <b className="analysis-budget__amount">$0.07 spent</b>
+                <span className="caps">Cost</span>
+                <b className="analysis-budget__amount">In Settings</b>
               </div>
               <p>
-                <b>$0.07</b> spent so far
+                Model calls count towards the machine total in Settings.
                 <br />
-                12 model calls · 0.4% of cap
+                This job&apos;s share is not broken out yet.
               </p>
             </div>
           </div>
@@ -413,7 +410,7 @@ export function AnalysisScreen({
               </span>
             )}
             <Progress value={(revealed / totalShots) * 100} />
-            <span className="analysis-sheet__eta">{done ? 'Ready to review' : '2 min left'}</span>
+            <span className="analysis-sheet__eta">{done ? 'Ready to review' : 'Time left not estimated'}</span>
           </div>
         </Card>
       </div>

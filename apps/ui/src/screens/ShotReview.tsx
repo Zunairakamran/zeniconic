@@ -152,8 +152,9 @@ export function ShotReviewScreen({ listing, candidates, onNavigate }: ScreenProp
                         variant="ghost"
                         size="sm"
                         icon="swap"
-                        aria-label={`Swap the ${candidate.room.toLowerCase()} shot`}
-                        onClick={() => undefined}
+                        disabled
+                        title="Swapping shots is not available yet. Ask for a change in Refine instead."
+                        aria-label={`Swap the ${candidate.room.toLowerCase()} shot (not available yet)`}
                       >
                         Swap
                       </Button>

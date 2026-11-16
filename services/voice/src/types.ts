@@ -53,6 +53,8 @@ export interface VoiceTrackInput {
   mixer?: VoiceMixer;
   /** Defaults to data/voice at the repository root. */
   cacheDir?: string;
+  /** Kokoro cache root (`<data>/models/kokoro`); enables local, verified weights. */
+  modelDir?: string;
   /** Defaults to <listingDir>/out/audio. */
   outDir?: string;
   /** Defaults to the EDL's target duration. */

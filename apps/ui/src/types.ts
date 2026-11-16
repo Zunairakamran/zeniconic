@@ -36,6 +36,8 @@ export interface Listing {
   status: ListingStatus;
   updatedAt: string;
   variantCount: number;
+  /** Clips in the footage index; absent until analysis has run. */
+  clipCount?: number;
   progress?: number;
   tone: string;
 }
@@ -79,6 +81,8 @@ export interface ScreenProps {
   /** True when Intake is creating a brand-new listing. */
   newListing: boolean;
   dataDir: string;
+  /** Model spend recorded for this machine, from `settings:get`. */
+  spendUsd: number;
   /** Render profiles selected in Formats, in selection order. */
   selectedProfiles: string[];
   onProfilesChange: (profiles: string[]) => void;

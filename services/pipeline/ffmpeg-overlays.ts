@@ -88,6 +88,11 @@ export interface OverlayRenderOptions {
   brand?: OverlayBrand;
   /** Directory holding Archivo.ttf and BricolageGrotesque.ttf. */
   fontsDir: string;
+  /**
+   * Hard ceiling for the ffmpeg pass. The export passes what is left of its
+   * budget so a slow machine cannot start a pass it has no time to finish.
+   */
+  timeoutMs?: number;
 }
 
 export interface OverlayRenderResult {
@@ -662,7 +667,7 @@ export async function renderFfmpegOverlays(
     '-movflags',
     '+faststart',
     options.output,
-  ]);
+  ], options.timeoutMs);
 
   if (result.code !== 0) {
     throw new Error(

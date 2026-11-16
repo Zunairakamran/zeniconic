@@ -100,6 +100,10 @@
   grid-column: span 5;
 }
 
+.settings__card--voice {
+  grid-column: span 5;
+}
+
 .settings__card--storage {
   grid-column: span 4;
 }

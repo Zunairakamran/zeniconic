@@ -217,7 +217,10 @@ export function IntakeScreen({
             <span className="intake-step">Step 2 of 6</span>
           </div>
           <p className="intake-sub">
-            {listing.address}, {listing.community} · 23 clips · 4m 12s · saved 14 Nov, 14:02
+            {listing.address}, {listing.community} · {listing.updatedAt} ·{' '}
+            {listing.clipCount !== undefined && listing.clipCount > 0
+              ? `${listing.clipCount} clips indexed`
+              : 'no footage indexed yet'}
           </p>
         </div>
       </header>
@@ -252,9 +255,13 @@ export function IntakeScreen({
                 <Icon name="plus" size={20} />
               </span>
               <div>
-                <h2 id="intake-clips">23 clips</h2>
+                <h2 id="intake-clips">
+                  {listing.clipCount !== undefined && listing.clipCount > 0
+                    ? `${listing.clipCount} clips`
+                    : 'Footage'}
+                </h2>
                 <p className="intake-drop__meta">
-                  <b>4m 12s</b> total · <b>9 vertical</b> / <b>14 wide</b> · 4.8 GB
+                  <b>Read on this machine.</b> Sizes and orientation appear after indexing.
                 </p>
               </div>
               <div className="intake-drop__actions">
@@ -299,7 +306,7 @@ export function IntakeScreen({
 
             <p className="intake-drop__note">
               <Icon name="check" size={13} />
-              Read locally · 2 clips have no audio; they will be used without sound.
+              Read locally · nothing is uploaded from this screen.
             </p>
           </section>
 
@@ -553,8 +560,8 @@ export function IntakeScreen({
           <div className="intake-source-note">
             <Icon name="spark" size={15} />
             <span>
-              <b>Sources</b> listing-sheet.pdf · 23 clips · read 14 Nov, 14:02. Two clips show the
-              garden but no house number; nothing is inferred from them.
+              <b>Sources</b> the listing sheet and your typed values. Nothing is inferred from
+              footage that does not show it.
             </span>
           </div>
         </div>

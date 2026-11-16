@@ -315,8 +315,10 @@ interface FfmpegResult {
 
 const MAX_STDERR_LINES = 200;
 const REPORTED_STDERR_LINES = 20;
+/** No caller means "give up eventually", not "wait forever". */
+const DEFAULT_RENDER_TIMEOUT_MS = 15 * 60_000;
 
-function runFfmpeg(args: string[]): Promise<FfmpegResult> {
+function runFfmpeg(args: string[], timeoutMs: number): Promise<FfmpegResult> {
   const bin = ffmpegPath();
   return new Promise<FfmpegResult>((resolve, reject) => {
     const child = spawn(bin, args, {
@@ -326,6 +328,21 @@ function runFfmpeg(args: string[]): Promise<FfmpegResult> {
 
     const lines: string[] = [];
     let partial = '';
+    let timedOut = false;
+
+    const timer = setTimeout(() => {
+      timedOut = true;
+      // Windows: `child.kill()` leaves ffmpeg's own children (and the file
+      // handles on the output) alive, so the tree goes with it.
+      if (process.platform === 'win32' && child.pid !== undefined) {
+        spawn('taskkill', ['/pid', String(child.pid), '/T', '/F'], {
+          windowsHide: true,
+          stdio: 'ignore',
+        }).on('error', () => child.kill());
+      } else {
+        child.kill('SIGKILL');
+      }
+    }, Math.max(1, timeoutMs));
 
     child.stderr.on('data', (chunk: Buffer) => {
       partial += chunk.toString();
@@ -337,10 +354,17 @@ function runFfmpeg(args: string[]): Promise<FfmpegResult> {
       if (lines.length > MAX_STDERR_LINES) lines.splice(0, lines.length - MAX_STDERR_LINES);
     });
 
-    child.on('error', (error) => reject(error));
+    child.on('error', (error) => {
+      clearTimeout(timer);
+      reject(error);
+    });
     child.on('close', (code) => {
+      clearTimeout(timer);
       if (partial.trim().length > 0) lines.push(partial.trim());
-      resolve({ code: code ?? -1, stderr: lines.slice(-REPORTED_STDERR_LINES) });
+      if (timedOut) {
+        lines.push(`ffmpeg was stopped after ${String(Math.round(timeoutMs / 1000))} s.`);
+      }
+      resolve({ code: timedOut ? -2 : (code ?? -1), stderr: lines.slice(-REPORTED_STDERR_LINES) });
     });
   });
 }
@@ -348,13 +372,16 @@ function runFfmpeg(args: string[]): Promise<FfmpegResult> {
 /**
  * Renders one EDL for one profile. The output directory is created if missing;
  * a non-zero ffmpeg exit becomes a `RenderError` carrying the last 20 lines of
- * stderr, which is what the job log shows.
+ * stderr, which is what the job log shows. `timeoutMs` is the export's own
+ * deadline: a pass that outlives it is killed rather than allowed to hold the
+ * job open past the 15-minute budget.
  */
 export async function renderEdl(
   edl: Edl,
   profile: ProfileId,
   quality: Quality,
   output: string,
+  options: { timeoutMs?: number } = {},
 ): Promise<void> {
   const spec = PROFILES[profile];
   if (!spec) throw new PipelineError('E_ARGUMENT', `Unknown render profile "${profile}".`);
@@ -364,6 +391,6 @@ export async function renderEdl(
 
   await mkdir(dirname(output), { recursive: true });
   const args = buildRenderArgs(edl, spec, { quality, output });
-  const result = await runFfmpeg(args);
+  const result = await runFfmpeg(args, options.timeoutMs ?? DEFAULT_RENDER_TIMEOUT_MS);
   if (result.code !== 0) throw new RenderError(result.code, result.stderr);
 }

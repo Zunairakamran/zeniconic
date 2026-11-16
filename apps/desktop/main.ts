@@ -11,6 +11,7 @@
 
 import { app, BrowserWindow, dialog, ipcMain, safeStorage, session, shell } from 'electron';
 import { existsSync } from 'node:fs';
+import { readdir, rm, stat } from 'node:fs/promises';
 import { join, resolve } from 'node:path';
 import { OpenRouterClient } from '../../packages/ai/src/index';
 import { JobRunner } from '../../packages/jobs/src/index';
@@ -25,9 +26,11 @@ import type {
   Handlers,
   JobProgressEvent,
   SecretCipher,
+  VoiceModelPort,
 } from '../../packages/ipc/src/index';
 import { JsonStore } from '../../packages/store/src/index';
 import models from '../../services/pipeline/models.json';
+import { KokoroModelDownloader, modelRoot } from '../../services/voice/src/index';
 import { createChatService } from './chat';
 import { DesktopPipeline } from './pipeline';
 import { createSplashWindow, waitMinimum } from './splash';
@@ -306,6 +309,35 @@ function registerIpc(handlers: Handlers): void {
   }
 }
 
+/**
+ * Removes export scratch directories a crash left behind. A killed job never
+ * reaches its `finally`, and each one holds hard-linked footage plus a
+ * Remotion encode; after a few crash-and-retry cycles this is gigabytes.
+ * Only directories old enough that no live export can own them are touched.
+ */
+async function sweepOrphanedWorkDirs(dataDir: string): Promise<void> {
+  const tmpDir = join(dataDir, 'tmp');
+  const cutoff = Date.now() - 6 * 60 * 60_000;
+  let entries: string[];
+  try {
+    entries = await readdir(tmpDir);
+  } catch {
+    return;
+  }
+  for (const entry of entries) {
+    if (!entry.startsWith('export-') && !entry.startsWith('review-')) continue;
+    const path = join(tmpDir, entry);
+    try {
+      const info = await stat(path);
+      if (info.isDirectory() && info.mtimeMs < cutoff) {
+        await rm(path, { recursive: true, force: true, maxRetries: 3, retryDelay: 200 });
+      }
+    } catch (error) {
+      console.warn(`[pipeline] could not clear ${path}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+}
+
 async function start(): Promise<void> {
   const root = dataRoot();
 
@@ -313,6 +345,9 @@ async function start(): Promise<void> {
 
   const store = new JsonStore(root);
   await store.init();
+
+  // Cheap, once per launch, and never blocks the window.
+  void sweepOrphanedWorkDirs(root);
 
   const settings = createSettings({
     dataDir: root,
@@ -394,6 +429,22 @@ async function start(): Promise<void> {
   };
 
   const runner = new JobRunner({ executor });
+  const downloader = new KokoroModelDownloader({ root: modelRoot(root) });
+  const voiceModel: VoiceModelPort = {
+    status: () => downloader.status(),
+    start: async () => {
+      void downloader.start((status) => {
+        // No event channel: the renderer polls `voice:modelStatus`. The
+        // callback keeps the phase fresh for a status call that races the start.
+        if (status.phase === 'error') console.warn(`[voice-model] ${status.error ?? 'failed'}`);
+      });
+      return await downloader.status();
+    },
+    cancel: async () => {
+      downloader.cancel();
+      return await downloader.status();
+    },
+  };
   const handlers = createHandlers({
     store,
     runner,
@@ -403,6 +454,7 @@ async function start(): Promise<void> {
     chooseFolder: chooseFootageFolder,
     dataDir: root,
     openPath: (path) => shell.openPath(path),
+    voiceModel,
   });
 
   registerIpc(handlers);

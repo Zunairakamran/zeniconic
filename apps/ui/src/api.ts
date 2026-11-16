@@ -23,6 +23,7 @@ import type {
   Theme,
   VariantSummary,
   VoiceMode,
+  VoiceModelStatus,
 } from '../../../packages/ipc/src/index';
 import type { JobRecord } from '../../../packages/jobs/src/index';
 import type { Facts, ListingRecord } from '../../../packages/store/src/index';
@@ -150,6 +151,20 @@ function demoUpdateFacts(listingId: string, patch: Partial<Facts>): ListingRecor
 
 const demoVariantState = new Map<string, VariantSummary[]>();
 let demoKeyConfigured = false;
+/** Browser-preview stand-in for the Kokoro download; the desktop owns the real one. */
+let demoVoiceInstalled = false;
+const DEMO_VOICE_TOTAL = 92_364_770;
+const demoTracks = {
+  voiceModel(): VoiceModelStatus {
+    return {
+      phase: demoVoiceInstalled ? 'ready' : 'missing',
+      installed: demoVoiceInstalled,
+      bytes: demoVoiceInstalled ? DEMO_VOICE_TOTAL : 0,
+      totalBytes: DEMO_VOICE_TOTAL,
+      updatedAt: new Date().toISOString(),
+    };
+  },
+};
 
 interface DemoChatState {
   sequence: number;
@@ -305,6 +320,7 @@ export function toUiListing(record: ListingRecord): Listing {
     status: record.status,
     updatedAt: whenLabel(record.updatedAt),
     variantCount: 0,
+    clipCount: record.clipCount,
     tone: toneFor(record.id),
   };
 }
@@ -359,6 +375,11 @@ export interface ZeniconicApi {
   };
   shell: {
     openPath(path: string): Promise<OpenPathResult>;
+  };
+  voice: {
+    modelStatus(): Promise<VoiceModelStatus>;
+    downloadModel(): Promise<VoiceModelStatus>;
+    cancelModel(): Promise<VoiceModelStatus>;
   };
   onJobProgress(listener: (event: JobProgressEvent) => void): () => void;
 }
@@ -535,6 +556,27 @@ export const api: ZeniconicApi = {
     },
   },
 
+  voice: {
+    async modelStatus() {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('voice:modelStatus');
+      return demoTracks.voiceModel();
+    },
+
+    async downloadModel() {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('voice:modelDownload');
+      demoVoiceInstalled = true;
+      return demoTracks.voiceModel();
+    },
+
+    async cancelModel() {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('voice:modelCancel');
+      return demoTracks.voiceModel();
+    },
+  },
+
   onJobProgress(listener) {
     const desktop = bridge();
     if (!desktop) return () => undefined;
@@ -556,4 +598,5 @@ export type {
   Theme,
   VariantSummary,
   VoiceMode,
+  VoiceModelStatus,
 };

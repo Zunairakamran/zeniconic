@@ -2,8 +2,14 @@ import { useEffect, useState } from 'react';
 import { Badge, Button, Card, Icon, Progress } from '../ui';
 import { applyTheme, getStoredTheme, type Theme } from '../theme';
 import { api } from '../api';
+import type { VoiceModelStatus } from '../api';
 import type { ScreenProps } from '../types';
 import './Settings.css';
+
+function formatBytes(bytes: number): string {
+  const mb = bytes / 1_000_000;
+  return mb >= 1000 ? `${(mb / 1000).toFixed(2)} GB` : `${mb.toFixed(1)} MB`;
+}
 
 const models = [
   { role: 'Room tagging', kind: 'Vision', id: 'google/gemini-3.8-flash' },
@@ -29,14 +35,6 @@ const logLines = [
 ];
 
 function ModelRow({ role, kind, id }: { role: string; kind: string; id: string }) {
-  const [state, setState] = useState<'idle' | 'testing' | 'ok'>('idle');
-
-  useEffect(() => {
-    if (state !== 'testing') return;
-    const timer = window.setTimeout(() => setState('ok'), 800);
-    return () => window.clearTimeout(timer);
-  }, [state]);
-
   return (
     <div className="settings__model">
       <div className="settings__model-role">
@@ -45,19 +43,17 @@ function ModelRow({ role, kind, id }: { role: string; kind: string; id: string }
       </div>
       <div className="settings__model-main">
         <code className="settings__model-id">{id}</code>
-        <span className={`settings__model-check${state === 'ok' ? ' is-ok' : ''}`}>
+        <span className="settings__model-check">
           <i aria-hidden="true" />
-          {state === 'idle' ? 'Checked 2 min ago' : null}
-          {state === 'testing' ? 'Testing…' : null}
-          {state === 'ok' ? 'Checked just now' : null}
+          No test run yet
         </span>
       </div>
       <Button
         size="sm"
         variant="quiet"
-        disabled={state === 'testing'}
-        aria-label={`Test ${role.toLowerCase()} model`}
-        onClick={() => setState('testing')}
+        disabled
+        title="Model tests are not available yet. Analysis will report the first failure."
+        aria-label={`Test ${role.toLowerCase()} model (not available yet)`}
       >
         Test
       </Button>
@@ -76,6 +72,67 @@ export function SettingsScreen({ dataDir }: ScreenProps) {
   const [keyValue, setKeyValue] = useState('');
   const [keyBusy, setKeyBusy] = useState(false);
   const [keyError, setKeyError] = useState<string | undefined>();
+  const [voice, setVoice] = useState<VoiceModelStatus | null>(null);
+  const [voiceBusy, setVoiceBusy] = useState(false);
+  const [voiceError, setVoiceError] = useState<string | undefined>();
+
+  useEffect(() => {
+    let live = true;
+    void api.voice
+      .modelStatus()
+      .then((status) => {
+        if (live) setVoice(status);
+      })
+      .catch((error: unknown) => {
+        if (live) setVoiceError(error instanceof Error ? error.message : 'The voice model status could not be read.');
+      });
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  // Poll only while bytes are moving; a ready or missing model costs nothing.
+  useEffect(() => {
+    if (voice === null) return;
+    if (voice.phase !== 'downloading' && voice.phase !== 'verifying') return;
+    let live = true;
+    const timer = window.setInterval(() => {
+      void api.voice
+        .modelStatus()
+        .then((status) => {
+          if (live) setVoice(status);
+        })
+        .catch(() => undefined);
+    }, 700);
+    return () => {
+      live = false;
+      window.clearInterval(timer);
+    };
+  }, [voice?.phase]);
+
+  const startVoiceDownload = async () => {
+    setVoiceBusy(true);
+    setVoiceError(undefined);
+    try {
+      const status = await api.voice.downloadModel();
+      setVoice(status);
+    } catch (error) {
+      setVoiceError(error instanceof Error ? error.message : 'The download could not start.');
+    } finally {
+      setVoiceBusy(false);
+    }
+  };
+
+  const cancelVoiceDownload = async () => {
+    setVoiceBusy(true);
+    try {
+      setVoice(await api.voice.cancelModel());
+    } catch (error) {
+      setVoiceError(error instanceof Error ? error.message : 'The download could not be paused.');
+    } finally {
+      setVoiceBusy(false);
+    }
+  };
   const [snapshot, setSnapshot] = useState<
     { dataDir: string; spendUsd: number; version: string } | undefined
   >();
@@ -243,6 +300,94 @@ export function SettingsScreen({ dataDir }: ScreenProps) {
           </div>
         </Card>
 
+        <Card className="settings__card settings__card--voice">
+          <div className="settings__card-head">
+            <h2>Voice model</h2>
+            <Badge
+              tone={
+                voice?.installed
+                  ? 'ok'
+                  : voice?.phase === 'error'
+                    ? 'fail'
+                    : voice?.phase === 'downloading' || voice?.phase === 'verifying'
+                      ? 'work'
+                      : 'idle'
+              }
+            >
+              {voice === null
+                ? 'Checking'
+                : voice.installed
+                  ? 'Ready'
+                  : voice.phase === 'downloading'
+                    ? 'Downloading'
+                    : voice.phase === 'verifying'
+                      ? 'Checking'
+                      : voice.phase === 'error'
+                        ? 'Failed'
+                        : voice.bytes > 0
+                          ? 'Paused'
+                          : 'Not installed'}
+            </Badge>
+          </div>
+          <div className="settings__body" aria-busy={voice === null || voiceBusy}>
+            <p className="settings__note">
+              Kokoro 82M, 92 MB. Speaks the bridge lines between the agent&rsquo;s own clips.
+              Downloads once and resumes from the byte already on disk if the connection drops.
+            </p>
+
+            {voice !== null && !voice.installed && voice.bytes > 0 ? (
+              <div style={{ marginTop: '10px' }}>
+                <Progress
+                  value={(voice.bytes / Math.max(1, voice.totalBytes)) * 100}
+                  label="Voice model download"
+                />
+                <p
+                  className="settings__note"
+                  style={{ marginTop: '6px' }}
+                  role="status"
+                  aria-live="polite"
+                >
+                  {formatBytes(voice.bytes)} of {formatBytes(voice.totalBytes)}
+                  {voice.phase === 'verifying' ? ' · checking the files' : ''}
+                  {voice.file ? ` · ${voice.file.split('/').pop()}` : ''}
+                </p>
+              </div>
+            ) : null}
+
+            <div style={{ display: 'flex', gap: '8px', marginTop: '12px', flexWrap: 'wrap' }}>
+              {voice?.phase === 'downloading' || voice?.phase === 'verifying' ? (
+                <Button variant="secondary" onClick={() => void cancelVoiceDownload()} disabled={voiceBusy}>
+                  Pause download
+                </Button>
+              ) : (
+                <Button
+                  variant={voice?.installed ? 'secondary' : 'primary'}
+                  onClick={() => void startVoiceDownload()}
+                  disabled={voiceBusy || voice === null}
+                >
+                  {voice === null
+                    ? 'Checking status…'
+                    : voice.installed
+                      ? 'Re-check files'
+                      : voice.bytes > 0
+                        ? 'Resume download'
+                        : 'Download voice model'}
+                </Button>
+              )}
+              {voice?.installed ? <span className="settings__meta">Installed on this machine</span> : null}
+            </div>
+
+            {voiceError || voice?.error ? (
+              <p className="settings__note" role="alert" style={{ color: 'var(--danger-text)', marginTop: '8px' }}>
+                {voiceError ?? voice?.error}
+              </p>
+            ) : null}
+            <p className="settings__note" style={{ marginTop: '8px' }}>
+              Without it, exports use the music bed and say so in the result. No silent 92 MB download.
+            </p>
+          </div>
+        </Card>
+
         <Card className="settings__card settings__card--models">
           <div className="settings__card-head">
             <h2>Models</h2>
@@ -384,18 +529,20 @@ export function SettingsScreen({ dataDir }: ScreenProps) {
 
             <div className="settings__storage-legend">
               <span>
-                <i className="is-source" /> Source 9.1 GB
+                <i className="is-source" /> Source footage
               </span>
               <span>
-                <i className="is-takes" /> Takes 2.4 GB
+                <i className="is-takes" /> Rendered takes
               </span>
               <span>
-                <i className="is-cache" /> Cache 0.9 GB
+                <i className="is-cache" /> Reusable cache
               </span>
             </div>
 
             <div className="settings__storage-foot">
-              <span className="settings__note">178 GB free of 240 GB</span>
+              <span className="settings__note">
+                Space used and free space are not measured yet.
+              </span>
               <Button size="sm" onClick={() => void api.shell.openPath(dataFolder)}>
                 Open folder
               </Button>
@@ -407,12 +554,12 @@ export function SettingsScreen({ dataDir }: ScreenProps) {
           <div className="settings__card-head">
             <h2>Diagnostics</h2>
             <span className="settings__meta">
-              Last 200 lines · no footage or addresses included
+              Example lines · no footage or addresses included
             </span>
           </div>
           <div className="settings__body">
             <div className="settings__diag">
-              <div className="settings__log" role="log" aria-label="Recent application log">
+              <div className="settings__log" role="log" aria-label="Example application log">
                 {logLines.map((line) => (
                   <div className="settings__log-row" key={`${line.time}-${line.scope}`}>
                     <span className="settings__log-time">{line.time}</span>

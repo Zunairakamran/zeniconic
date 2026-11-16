@@ -34,7 +34,6 @@
     "electron": "^45.3.2",
     "electron-builder": "^26.18.0",
     "esbuild": "^0.28.2",
-    "sharp": "^0.34.5",
     "tsx": "^4.19.2",
     "typescript": "^5.7.2",
     "vite": "^8.3.8",
@@ -42,6 +41,7 @@
     "wait-on": "^9.5.1"
   },
   "dependencies": {
+    "@huggingface/transformers": "^3.8.1",
     "@remotion/bundler": "^4.0.543",
     "@remotion/renderer": "^4.0.543",
     "ajv": "^8.17.1",
@@ -52,7 +52,8 @@
     "kokoro-js": "^1.2.1",
     "react": "^19.3.1",
     "react-dom": "^19.3.1",
-    "remotion": "^4.0.543"
+    "remotion": "^4.0.543",
+    "sharp": "^0.34.5"
   },
   "build": {
     "appId": "com.zeniconic.app",
@@ -69,7 +70,12 @@
     "asarUnpack": [
       "**/node_modules/ffmpeg-static/**",
       "**/node_modules/ffprobe-static/**",
-      "apps/desktop/electron/assets/**"
+      "**/node_modules/onnxruntime-node/**",
+      "**/node_modules/sharp/**",
+      "**/node_modules/@img/**",
+      "**/*.node",
+      "apps/desktop/electron/assets/**",
+      "**/node_modules/phonemizer/**"
     ],
     "npmRebuild": false,
     "extraResources": [
@@ -84,9 +90,22 @@
       "package.json",
       "node_modules/ffmpeg-static/**/*",
       "node_modules/ffprobe-static/**/*",
-      "!node_modules/!(ffmpeg-static|ffprobe-static)/**",
+      "node_modules/kokoro-js/**/*",
+      "node_modules/phonemizer/**/*",
+      "node_modules/@huggingface/transformers/**/*",
+      "node_modules/@huggingface/jinja/**/*",
+      "node_modules/onnxruntime-node/**/*",
+      "node_modules/onnxruntime-common/**/*",
+      "node_modules/sharp/**/*",
+      "node_modules/@img/sharp-win32-x64/**/*",
+      "node_modules/@img/colour/**/*",
+      "!node_modules/@huggingface/transformers/.cache/**",
+      "!node_modules/onnxruntime-node/bin/napi-v3/darwin/**",
+      "!node_modules/onnxruntime-node/bin/napi-v3/linux/**",
+      "!node_modules/onnxruntime-node/bin/napi-v3/win32/arm64/**",
       "!node_modules/ffprobe-static/bin/darwin/**",
       "!node_modules/ffprobe-static/bin/linux/**",
+      "!node_modules/!(ffmpeg-static|ffprobe-static|kokoro-js|phonemizer|onnxruntime-node|onnxruntime-common|sharp|@huggingface|@img)/**",
       "!node_modules/ffprobe-static/bin/win32/ia32/**",
       "!**/*.map",
       "!.env",

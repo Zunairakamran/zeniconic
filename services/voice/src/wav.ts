@@ -77,6 +77,40 @@ export function wavDurationSec(file: string): number {
 }
 
 /**
+ * True when `file` is a complete mono PCM WAV: the data chunk the header
+ * declares is actually on disk, and there is at least a sliver of audio.
+ * A crash mid-write leaves a header announcing samples that were never
+ * flushed; that file must be regenerated, not reused forever.
+ */
+export function wavIsIntact(file: string): boolean {
+  let buffer: Buffer;
+  try {
+    buffer = readFileSync(file);
+  } catch {
+    return false;
+  }
+  if (buffer.length <= WAV_HEADER_BYTES) return false;
+
+  const view = new DataView(buffer.buffer, buffer.byteOffset, buffer.byteLength);
+  let offset = 12;
+  while (offset + 8 <= buffer.length) {
+    const id = buffer.toString('ascii', offset, offset + 4);
+    const size = view.getUint32(offset + 4, true);
+
+    if (id === 'data') {
+      const available = buffer.length - (offset + 8);
+      if (size <= 0) return false;
+      // Every byte the header promises must be present. A truncated file is
+      // short by at least one write block, never by a rounding byte.
+      return available >= size && size >= 2;
+    }
+
+    offset += 8 + size + (size % 2);
+  }
+  return false;
+}
+
+/**
  * Removes leading and trailing silence only; speech is never touched. Kokoro
  * pads every line, and that padding is what makes a cached line feel late.
  */

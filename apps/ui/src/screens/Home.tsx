@@ -55,12 +55,17 @@ function StatusMark({ listing }: { listing: Listing }) {
   }
 }
 
-export function HomeScreen({ listings, onNewListing, onSelectListing }: ScreenProps) {
+export function HomeScreen({ listings, spendUsd, onNewListing, onSelectListing }: ScreenProps) {
+  const monthYear = new Intl.DateTimeFormat('en-GB', { month: 'long', year: 'numeric' }).format(
+    new Date(),
+  );
+  const variantsTotal = listings.reduce((total, listing) => total + listing.variantCount, 0);
+
   return (
     <div className="screen home">
       <header className="home-head">
         <div>
-          <Eyebrow>November 2026 · {listings.length} listings</Eyebrow>
+          <Eyebrow>{monthYear} · {listings.length} listings</Eyebrow>
           <h1>Listings</h1>
           <p className="home-sub">Everything you have shot this month, in one place.</p>
         </div>
@@ -115,9 +120,9 @@ export function HomeScreen({ listings, onNewListing, onSelectListing }: ScreenPr
           <span className="home-foot__dot" aria-hidden="true">
             ·
           </span>
-          27 files
+          {variantsTotal} variants
         </span>
-        <span className="home-foot__spend">$1.84 model spend</span>
+        <span className="home-foot__spend">${spendUsd.toFixed(2)} model spend</span>
       </footer>
     </div>
   );

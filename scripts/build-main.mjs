@@ -44,7 +44,15 @@ const shared = {
   // binaries with __dirname, so leaving them external keeps the path correct.
   // Kokoro dynamically imports onnxruntime-node's native binaries; bundling it
   // would make esbuild try to load every platform's `.node` file.
-  external: ['electron', 'ffmpeg-static', 'ffprobe-static', 'kokoro-js'],
+  external: [
+    'electron',
+    'ffmpeg-static',
+    'ffprobe-static',
+    'onnxruntime-node',
+    'onnxruntime-common',
+    'sharp',
+    'phonemizer',
+  ],
   tsconfig: join(root, 'tsconfig.json'),
   alias,
   legalComments: 'none',

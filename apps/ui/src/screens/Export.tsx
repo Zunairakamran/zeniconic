@@ -294,12 +294,12 @@ export function ExportScreen({
 
           <Card className="export__checks">
             <div className="export__checks-head">
-              <span className="caps">Ready to render</span>
-              <Badge tone="ok">All clear</Badge>
+              <span className="caps">Before render</span>
+              <Badge tone="idle">Check</Badge>
             </div>
             <ul>
               <li>
-                <Icon name="check" size={13} /> Facts confirmed
+                <Icon name="check" size={13} /> Facts come from Intake and are saved before analysis
               </li>
               <li>
                 <Icon name="check" size={13} /> {exportSet.map((v) => v.name).join(' and ')}{' '}
@@ -307,7 +307,7 @@ export function ExportScreen({
                 {excluded.length > 0 ? ` · ${excluded.map((v) => v.name).join(', ')} excluded` : ''}
               </li>
               <li>
-                <Icon name="check" size={13} /> 178 GB free · about 240 MB needed
+                <Icon name="check" size={13} /> Free disk space is checked when the render starts
               </li>
             </ul>
           </Card>
@@ -415,11 +415,12 @@ export function ExportScreen({
                   value="manual"
                   checked={cover === 'manual'}
                   onChange={() => setCover('manual')}
+                  disabled
                 />
                 <span className="export-opt__dot" aria-hidden="true" />
                 <span className="export-opt__text">
                   <b>Pick manually</b>
-                  <small>Choose a frame</small>
+                  <small>Not available yet</small>
                 </span>
               </label>
             </div>
@@ -454,12 +455,13 @@ export function ExportScreen({
             <label className="export__toggle">
               <span className="export__toggle-text">
                 <b>Add the permit line</b>
-                <small>Optional. Marketing owns compliance.</small>
+                <small>Not applied to exports yet.</small>
               </span>
               <input
                 type="checkbox"
                 checked={permit}
                 onChange={(event) => setPermit(event.target.checked)}
+                disabled
               />
               <span className="export__switch" aria-hidden="true" />
             </label>

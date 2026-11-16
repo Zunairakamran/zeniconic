@@ -23,6 +23,27 @@ export type {
 export { VOICE_CACHE_VERSION, voiceLineKey, voiceLinePath } from './cache';
 
 export { DEFAULT_VOICE, KOKORO_MODEL_ID, createKokoroEngine } from './tts';
+export type { KokoroEngineOptions } from './tts';
+
+export {
+  KOKORO_FILES,
+  KOKORO_REPO,
+  KOKORO_TOTAL_BYTES,
+  KokoroModelDownloader,
+  hasPartial,
+  modelFilesComplete,
+  modelInstalled,
+  modelPath,
+  modelRoot,
+  presentBytes,
+  voiceModelStatus,
+} from './model';
+export type {
+  DownloadOptions,
+  ModelFile,
+  VoiceModelPhase,
+  VoiceModelStatus,
+} from './model';
 
 export { createFfmpegMixer } from './mixer';
 
@@ -30,6 +51,7 @@ export {
   readWavMono16,
   trimEdgeSilence,
   wavDurationSec,
+  wavIsIntact,
   writeWavMono16,
 } from './wav';
 export type { MonoWav } from './wav';

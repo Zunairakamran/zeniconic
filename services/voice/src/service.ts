@@ -11,7 +11,7 @@
  * `data/voice/` so a script tweak only re-renders the changed lines.
  */
 
-import { existsSync, mkdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { toCues } from '../../../packages/captions/src/cues';
 import {
@@ -33,7 +33,7 @@ import type {
   VoiceTrackInput,
   VoiceTrackResult,
 } from './types';
-import { trimEdgeSilence, wavDurationSec, writeWavMono16 } from './wav';
+import { trimEdgeSilence, wavDurationSec, wavIsIntact, writeWavMono16 } from './wav';
 
 /** The shipped bed. docs/AUDIO-VOICE.md: the catchy bed, never the calm one. */
 export const DEFAULT_MUSIC_PATH = resolve('data/music/catchy-120.m4a');
@@ -231,6 +231,26 @@ export function presenterWindowsFor(
   return windows;
 }
 
+/**
+ * Writes a WAV atomically: the bytes land in a per-process temp name and are
+ * renamed into place, so a crash or a second export never publishes a
+ * half-written line and never reads one.
+ */
+function writeWavAtomic(file: string, samples: Float32Array, sampleRate: number): void {
+  const temp = `${file}.${String(process.pid)}-${Math.random().toString(36).slice(2, 8)}.tmp`;
+  try {
+    writeWavMono16(temp, samples, sampleRate);
+    renameSync(temp, file);
+  } catch (error) {
+    try {
+      rmSync(temp, { force: true });
+    } catch {
+      // The rename is the only step that matters.
+    }
+    throw error;
+  }
+}
+
 /** The cache file for one line, generating and trimming it on a miss. */
 async function synthesiseLine(
   text: string,
@@ -239,8 +259,18 @@ async function synthesiseLine(
   cacheDir: string,
 ): Promise<TtsLine> {
   const file = voiceLinePath(cacheDir, text, voice);
-  if (existsSync(file) && statSync(file).size > 44) {
-    return { wav: file, durationSec: wavDurationSec(file) };
+  if (existsSync(file)) {
+    try {
+      // A file that only passes "bigger than a header" is how a truncated
+      // line survives forever and ships as silence.
+      if (wavIsIntact(file)) {
+        const durationSec = wavDurationSec(file);
+        if (durationSec > 0) return { wav: file, durationSec };
+      }
+    } catch {
+      // Fall through: a corrupt cache entry is a miss, not a failure.
+    }
+    rmSync(file, { force: true });
   }
 
   const audio = await engine.generate(text, { voice });
@@ -248,7 +278,10 @@ async function synthesiseLine(
     throw new RangeError(`TTS returned an invalid sample rate for "${text.slice(0, 48)}"`);
   }
   const samples = trimEdgeSilence(audio.samples, audio.sampleRate);
-  writeWavMono16(file, samples, audio.sampleRate);
+  if (samples.length === 0) {
+    throw new Error(`TTS returned no audio for "${text.slice(0, 48)}"`);
+  }
+  writeWavAtomic(file, samples, audio.sampleRate);
   return { wav: file, durationSec: samples.length / audio.sampleRate };
 }
 
@@ -283,7 +316,9 @@ export async function buildVoiceTrack(input: VoiceTrackInput): Promise<VoiceTrac
   const voice = input.voice ?? DEFAULT_VOICE;
   const cues = scriptCues(input.edl);
   const windows = presenterWindowsFor(input.edl, listingDir, input.presenterClips);
-  const engine = input.tts ?? createKokoroEngine();
+  const engine = input.tts ?? createKokoroEngine(undefined, {
+    ...(input.modelDir === undefined ? {} : { modelDir: input.modelDir }),
+  });
   const mixer: VoiceMixer = input.mixer ?? createFfmpegMixer();
 
   mkdirSync(cacheDir, { recursive: true });

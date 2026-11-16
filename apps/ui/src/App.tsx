@@ -67,6 +67,7 @@ export function App() {
     'landscape',
   ]);
   const [dataDir, setDataDir] = useState('');
+  const [spendUsd, setSpendUsd] = useState(0);
   const demoTimer = useRef<number | undefined>(undefined);
 
   // Listings and the storage root live in the main process.
@@ -89,7 +90,9 @@ export function App() {
     api.settings
       .get()
       .then((settings) => {
-        if (!cancelled) setDataDir(settings.dataDir);
+        if (cancelled) return;
+        setDataDir(settings.dataDir);
+        setSpendUsd(settings.spendUsd);
       })
       .catch(() => undefined);
 
@@ -356,6 +359,7 @@ export function App() {
     ...(folders[selectedId] === undefined ? {} : { folder: folders[selectedId] }),
     newListing,
     dataDir,
+    spendUsd,
     selectedProfiles,
     onProfilesChange: setSelectedProfiles,
     onNewListing: () => {
@@ -424,7 +428,9 @@ export function App() {
             <b>{listing.address}</b>
           </div>
           <div className="topbar__right">
-            <span className="meter">$18.16 left</span>
+            <span className="meter" title="Model spend on this machine">
+              ${spendUsd.toFixed(2)} spent
+            </span>
             <button type="button" className="themebtn" onClick={toggleTheme} aria-label="Toggle theme">
               {theme === 'dark' ? 'Light' : 'Dark'}
             </button>

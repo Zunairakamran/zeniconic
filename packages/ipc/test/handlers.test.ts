@@ -2,7 +2,15 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
-import { createHandlers, createSettings, IpcError } from '../src/index';
+import {
+  CHANNELS,
+  createHandlers,
+  createSettings,
+  IpcError,
+  isChannel,
+  JOB_PROGRESS_CHANNEL,
+} from '../src/index';
+import type { Channel, VoiceModelStatus } from '../src/index';
 import { FakeChat, FakePipeline, FakeRunner, FakeSettings, FakeStore } from './fakes';
 
 const LISTING_ID = '2026-11-15-12-oak-avenue';
@@ -494,6 +502,33 @@ describe('chat', () => {
     ).rejects.toMatchObject({ code: 'E_INVALID_INPUT' });
   });
 
+  it('refuses a version id the service invented outside the slug grammar', async () => {
+    store.seed({ id: LISTING_ID });
+    chat.result = {
+      reply: 'Done.',
+      diff: '1 change: kitchen removed',
+      versionId: '../../calm-v1',
+      warnings: [],
+    };
+
+    await expect(
+      handlers['chat:send']({
+        listingId: LISTING_ID,
+        variantId: 'calm',
+        message: 'Drop the kitchen.',
+      }),
+    ).rejects.toMatchObject({ code: 'E_CHAT' });
+
+    chat.result = { reply: 'Done.', diff: 'no change', versionId: '', warnings: [] };
+    await expect(
+      handlers['chat:send']({
+        listingId: LISTING_ID,
+        variantId: 'calm',
+        message: 'Drop the kitchen.',
+      }),
+    ).rejects.toMatchObject({ code: 'E_CHAT' });
+  });
+
   it('returns version summaries and translates a service failure', async () => {
     store.seed({ id: LISTING_ID });
 
@@ -682,5 +717,162 @@ describe('shell:openPath', () => {
     await expect(local['shell:openPath']('  ')).rejects.toMatchObject({
       code: 'E_INVALID_INPUT',
     });
+  });
+});
+
+describe('voice model', () => {
+  const status = {
+    phase: 'missing' as const,
+    installed: false,
+    bytes: 0,
+    totalBytes: 92_364_770,
+    updatedAt: '2026-11-16T00:00:00.000Z',
+  };
+
+  function withVoice(port: Partial<{ status: () => Promise<VoiceModelStatus>; start: () => Promise<VoiceModelStatus>; cancel: () => Promise<VoiceModelStatus> }>) {
+    return createHandlers({
+      store,
+      runner,
+      pipeline,
+      settings,
+      dataDir: tempDir,
+      voiceModel: {
+        status: async () => status,
+        start: async () => status,
+        cancel: async () => status,
+        ...port,
+      },
+    });
+  }
+
+  it('returns the installer status', async () => {
+    const handlersWithVoice = withVoice({});
+    await expect(handlersWithVoice['voice:modelStatus']()).resolves.toEqual(status);
+  });
+
+  it('starts and cancels through the port', async () => {
+    const calls: string[] = [];
+    const handlersWithVoice = withVoice({
+      start: async () => {
+        calls.push('start');
+        return { ...status, phase: 'downloading' as const };
+      },
+      cancel: async () => {
+        calls.push('cancel');
+        return status;
+      },
+    });
+
+    const started = await handlersWithVoice['voice:modelDownload']();
+    expect(started.phase).toBe('downloading');
+    await handlersWithVoice['voice:modelCancel']();
+    expect(calls).toEqual(['start', 'cancel']);
+  });
+
+  it('fails with a typed error when the build has no installer', async () => {
+    await expect(handlers['voice:modelStatus']()).rejects.toMatchObject({
+      code: 'E_VOICE_MODEL',
+    });
+  });
+
+  it('wraps installer failures with the typed code', async () => {
+    const handlersWithVoice = withVoice({
+      status: async () => {
+        throw new Error('disk unavailable');
+      },
+    });
+    await expect(handlersWithVoice['voice:modelStatus']()).rejects.toMatchObject({
+      code: 'E_VOICE_MODEL',
+      message: 'disk unavailable',
+    });
+  });
+
+  it('cannot be pointed at a path: every argument is dropped', async () => {
+    // The three channels take no parameters. `ipcMain` still forwards whatever
+    // the renderer sends, so prove the extra values never reach the installer.
+    const received: unknown[][] = [];
+    const record = (args: unknown[]): VoiceModelStatus => {
+      received.push(args);
+      return status;
+    };
+    const handlersWithVoice = createHandlers({
+      store,
+      runner,
+      pipeline,
+      settings,
+      dataDir: tempDir,
+      voiceModel: {
+        status: async (...args: unknown[]) => record(args),
+        start: async (...args: unknown[]) => record(args),
+        cancel: async (...args: unknown[]) => record(args),
+      },
+    });
+
+    const hostile = handlersWithVoice['voice:modelStatus'] as unknown as (
+      ...args: unknown[]
+    ) => Promise<VoiceModelStatus>;
+    await hostile('C:/Windows/System32', { path: '../../secrets' });
+    await (handlersWithVoice['voice:modelDownload'] as unknown as (
+      ...args: unknown[]
+    ) => Promise<VoiceModelStatus>)('D:/video/data/openrouter.key');
+    await (handlersWithVoice['voice:modelCancel'] as unknown as (
+      ...args: unknown[]
+    ) => Promise<VoiceModelStatus>)(null, 42);
+
+    expect(received).toEqual([[], [], []]);
+  });
+});
+
+describe('channel contract', () => {
+  /**
+   * Declared arity per channel. A handler that grows a parameter the contract
+   * does not declare is either dead code or an unvalidated input path.
+   */
+  const ARITY: Record<Channel, number> = {
+    'listings:list': 0,
+    'listings:create': 1,
+    'listings:get': 1,
+    'listings:updateFacts': 1,
+    'analysis:chooseFolder': 0,
+    'analysis:start': 1,
+    'variants:list': 1,
+    'variants:approve': 1,
+    'variants:preview': 1,
+    'jobs:list': 0,
+    'chat:send': 1,
+    'chat:apply': 1,
+    'chat:versions': 2,
+    'export:start': 1,
+    'settings:get': 0,
+    'settings:setTheme': 1,
+    'settings:setKey': 1,
+    'settings:keyStatus': 0,
+    'shell:openPath': 1,
+    'voice:modelStatus': 0,
+    'voice:modelDownload': 0,
+    'voice:modelCancel': 0,
+  };
+
+  it('exposes exactly the handler table and no duplicate channels', () => {
+    expect(new Set(CHANNELS).size).toBe(CHANNELS.length);
+    expect([...Object.keys(handlers)].sort()).toEqual([...CHANNELS].sort());
+  });
+
+  it('gives every handler the arity its channel declares', () => {
+    for (const channel of CHANNELS) {
+      expect({ channel, arity: handlers[channel].length }).toEqual({
+        channel,
+        arity: ARITY[channel],
+      });
+    }
+  });
+
+  it('allows only request channels through the preload allow-list', () => {
+    for (const channel of CHANNELS) expect(isChannel(channel)).toBe(true);
+    // The event channel is subscribe-only; it must never be invokable.
+    expect(isChannel(JOB_PROGRESS_CHANNEL)).toBe(false);
+    expect(isChannel('voice:modelDelete')).toBe(false);
+    expect(isChannel('')).toBe(false);
+    expect(isChannel(undefined)).toBe(false);
   });
 });

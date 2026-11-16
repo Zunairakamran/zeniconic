@@ -132,6 +132,23 @@ export interface ChatVersion {
   summary: string;
 }
 
+/** Lifecycle of the optional Kokoro voice model download. */
+export type VoiceModelPhase = 'missing' | 'downloading' | 'verifying' | 'ready' | 'error';
+
+export interface VoiceModelStatus {
+  phase: VoiceModelPhase;
+  /** True only when every file has passed its checksum. */
+  installed: boolean;
+  /** Bytes present on disk now, including a resumable partial file. */
+  bytes: number;
+  totalBytes: number;
+  /** Repo-relative file being fetched, while downloading. */
+  file?: string;
+  /** Plain-language failure; a partial download is kept for the next attempt. */
+  error?: string;
+  updatedAt: string;
+}
+
 export interface IpcContract {
   'listings:list': () => Promise<ListingRecord[]>;
   'listings:create': (input: {
@@ -165,6 +182,11 @@ export interface IpcContract {
   'settings:setKey': (key: string) => Promise<void>;
   'settings:keyStatus': () => Promise<KeyStatus>;
   'shell:openPath': (path: string) => Promise<OpenPathResult>;
+  'voice:modelStatus': () => Promise<VoiceModelStatus>;
+  /** Starts or resumes the download, then returns at once; poll status. */
+  'voice:modelDownload': () => Promise<VoiceModelStatus>;
+  /** Pauses the download; the partial file is kept. */
+  'voice:modelCancel': () => Promise<VoiceModelStatus>;
 }
 
 export type Channel = keyof IpcContract;
@@ -219,6 +241,9 @@ export const CHANNELS: readonly Channel[] = [
   'settings:setKey',
   'settings:keyStatus',
   'shell:openPath',
+  'voice:modelStatus',
+  'voice:modelDownload',
+  'voice:modelCancel',
 ];
 
 export function isChannel(value: unknown): value is Channel {

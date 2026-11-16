@@ -73,9 +73,6 @@ export function VariantsScreen({
           <p className="variantscreen__sub">Three complete edits. Approve the ones you would send.</p>
         </div>
         <div className="variantscreen__actions">
-          <Button variant="ghost" onClick={() => undefined}>
-            Compare
-          </Button>
           <Button onClick={() => onNavigate('chat')}>Ask for a change</Button>
           <Button variant="primary" icon="export" onClick={() => onNavigate('formats')}>
             Export
@@ -188,13 +185,13 @@ export function VariantsScreen({
 
       <Card className="variantscreen__board">
         <div className="variantscreen__boardhead">
-          <h3 className="variantscreen__boardtitle">Storyboard · Calm</h3>
-          <span className="variantscreen__boardsub">11 shots · 30.0s · Quiet Morning</span>
-          <span className="variantscreen__boardspacer" />
-          <span className="variantscreen__warn">
-            <Icon name="alert" size={12} />
-            2 rejected in this variant
+          <h3 className="variantscreen__boardtitle">
+            Storyboard · {variants[0]?.name ?? 'Calm'}
+          </h3>
+          <span className="variantscreen__boardsub">
+            {boardShots.length} shots · shot order from analysis
           </span>
+          <span className="variantscreen__boardspacer" />
         </div>
 
         <div className="variantscreen__strip" role="group" aria-label="Storyboard shot order">
@@ -221,7 +218,7 @@ export function VariantsScreen({
 
         <p className="variantscreen__boardhint">
           <Icon name="swap" size={12} />
-          Drag to reorder · changes are previewed before they apply
+          Shot order is fixed after analysis · ask for a change in Refine
         </p>
       </Card>
     </div>

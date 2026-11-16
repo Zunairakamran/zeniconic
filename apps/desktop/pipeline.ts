@@ -23,7 +23,6 @@ import {
   stat,
   writeFile,
 } from 'node:fs/promises';
-import { homedir } from 'node:os';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { buildLoudnormPass1, parseLoudnormJson } from '../../packages/audio/src/index';
 import { validateEdl } from '../../packages/edl/src/index';
@@ -67,6 +66,8 @@ import {
   buildVoiceTrack,
   createKokoroEngine,
   DEFAULT_VOICE,
+  modelFilesComplete,
+  KOKORO_REPO,
   presenterWindowForCue,
   presenterWindowsFor,
   scriptCues,
@@ -1017,7 +1018,11 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
           const output = await this.outputPath(listing, variant.look, profile);
 
           try {
-            await renderEdl(pictureEdl, profile, quality, picture);
+            await renderEdl(pictureEdl, profile, quality, picture, {
+              // The picture pass is the one long FFmpeg step; it gets what is
+              // left of the budget, not an open-ended slot.
+              timeoutMs: Math.max(60_000, deadline - Date.now()),
+            });
           } catch (error) {
             throw new Error(
               `Could not render the ${labelFor(variant.look)} ${profile} video: ${messageOf(error)}`,
@@ -1190,20 +1195,27 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     return parts.join(' ');
   }
 
-  /** True when Kokoro's ONNX files are already on disk. */
-  private async hasVoiceModelCache(): Promise<boolean> {
-    const model = ['onnx-community', 'Kokoro-82M-v1.0-ONNX'];
-    const candidates = [
-      join(this.repoRoot, 'node_modules', '@huggingface', 'transformers', '.cache', ...model),
-      join(process.cwd(), 'node_modules', '@huggingface', 'transformers', '.cache', ...model),
-      join(this.repoRoot, '.cache', ...model),
-      join(homedir(), '.cache', 'huggingface', 'hub', 'models--onnx-community--Kokoro-82M-v1.0-ONNX'),
-    ];
+  /** The cache root the Kokoro loader can actually read, or undefined. */
+  private async resolveVoiceModelDir(modelDir: string): Promise<string | undefined> {
+    // The Settings download is the packaged path and the only one with a
+    // verified marker.
+    if (await modelFilesComplete(modelDir)) return modelDir;
 
-    for (const candidate of candidates) {
-      if (await exists(join(candidate, 'onnx'))) return true;
+    // A developer's pre-existing library cache is still useful, but only via
+    // the cache root the library reads (`<cacheDir>/<repo>/<file>`), never the
+    // HF hub layout, which this library cannot open. Claiming a model is
+    // present when the loader cannot see it is how an export ends up fetching
+    // 92 MB mid-render.
+    const repoPath = [...KOKORO_REPO.split('/')];
+    const roots = [
+      join(this.repoRoot, 'node_modules', '@huggingface', 'transformers', '.cache'),
+      join(process.cwd(), 'node_modules', '@huggingface', 'transformers', '.cache'),
+      join(this.repoRoot, '.cache'),
+    ];
+    for (const root of roots) {
+      if (await modelFilesComplete(join(root, ...repoPath))) return root;
     }
-    return false;
+    return undefined;
   }
 
   /**
@@ -1215,8 +1227,9 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     edl: Edl,
     listingDir: string,
     cacheDir: string,
+    modelDir: string | undefined,
   ): Promise<boolean> {
-    if (await this.hasVoiceModelCache()) return true;
+    if (modelDir !== undefined) return true;
 
     const cues = scriptCues(edl);
     const windows = presenterWindowsFor(edl, listingDir);
@@ -1242,6 +1255,7 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     const music = await this.findMusicTrack();
     const totalSec = input.edl.format.targetDurationSec;
     const cacheDir = join(this.dataDir, 'voice');
+    const modelDir = join(this.dataDir, 'models', 'kokoro');
     const outDir = join(input.workDir, 'voice');
     const withMusic = (): { audioPath?: string } => (music === undefined ? {} : { audioPath: music });
 
@@ -1273,9 +1287,11 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
           };
 
     let voiceReady = true;
+    let modelCache: string | undefined;
     if (input.mode !== 'music') {
       try {
-        voiceReady = await this.voiceIsReady(preparedEdl, input.listingDir, cacheDir);
+        modelCache = await this.resolveVoiceModelDir(modelDir);
+        voiceReady = await this.voiceIsReady(preparedEdl, input.listingDir, cacheDir, modelCache);
       } catch (error) {
         console.warn(`[pipeline] voice preflight failed: ${messageOf(error)}`);
         voiceReady = false;
@@ -1283,17 +1299,15 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     }
 
     if (!voiceReady) {
-      // Load the model in the background; this export never waits for it.
-      void createKokoroEngine()
-        .generate('Zeniconic is ready.', { voice: DEFAULT_VOICE })
-        .catch((error: unknown) => {
-          console.warn(`[pipeline] Kokoro warm-up failed: ${messageOf(error)}`);
-        });
+      // Never fetch 92 MB behind the user's back: Settings owns that decision.
+      // The export stays music-only and says what to do next.
       return {
         ...withMusic(),
         captions: [],
         warnings: [
-          'Kokoro is still downloading in the background; this export uses music only. The next export can use voice.',
+          modelCache !== undefined
+            ? 'The voice model is installed, but this listing has no speech cache yet. Re-export to use the voice, or keep music.'
+            : 'The voice model is not downloaded. Open Settings → Voice model to get it; this export uses music only.',
         ],
       };
     }
@@ -1304,6 +1318,7 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
         listingDir: input.listingDir,
         ...(music === undefined ? {} : { music }),
         cacheDir,
+        ...(modelCache === undefined ? {} : { modelDir: modelCache }),
         outDir,
         totalSec,
       });
@@ -1323,7 +1338,7 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
         ...withMusic(),
         captions: [],
         warnings: [
-          input.mode === 'music'
+          input.mode === 'music' || music === undefined
             ? `The music bed could not be mastered (${reason}); exporting without audio.`
             : `The voice track could not be built (${reason}); exporting with music only.`,
         ],
@@ -1396,9 +1411,19 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
       }
     }
 
+    if (forced !== 'off' && cliPresent && !this.remotionUnavailable && remaining <= REMOTION_MIN_REMAINING_MS) {
+      // Not an error, but not a silent downgrade either: the viewer is told
+      // why this export's text looks like the FFmpeg path.
+      warning =
+        'Remotion was skipped because the export budget was nearly spent; the FFmpeg text path drew the overlays.';
+    }
+
     try {
       const output = join(input.workDir, `${input.profile}_text.mp4`);
       await renderFfmpegOverlays({
+        // A fallback that outlives the budget is the same failure as a
+        // timeout: the pass gets what is left, and no more.
+        timeoutMs: Math.max(30_000, Math.min(remaining, FFMPEG_TIMEOUT_MS)),
         edl: input.edl,
         profile: input.profile,
         quality: input.quality,

@@ -31,6 +31,8 @@ export type {
   VariantPreview,
   VariantSummary,
   VoiceMode,
+  VoiceModelPhase,
+  VoiceModelStatus,
 } from './contract';
 
 export { CHANNELS, JOB_PROGRESS_CHANNEL, isChannel } from './contract';
@@ -44,6 +46,7 @@ export type {
   RunnerPort,
   SettingsPortLike,
   StorePort,
+  VoiceModelPort,
 } from './handlers';
 
 export { createSettings, KEY_STORAGE_UNAVAILABLE, SettingsError } from './settings';

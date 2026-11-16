@@ -309,7 +309,7 @@ describe('no three-line cues', () => {
       expect(cue.lines.length).toBeGreaterThan(0);
       expect(cue.lines.length).toBeLessThanOrEqual(2);
       for (const line of cue.lines) {
-        expect(Array.from(line).length).toBeLessThanOrEqual(28);
+        expect(Array.from(line).length).toBeLessThanOrEqual(20);
       }
     }
   });

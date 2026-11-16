@@ -9,6 +9,9 @@ import {
   presenterWindowForCue,
   presenterWindowsFor,
   voiceLinePath,
+  wavDurationSec,
+  wavIsIntact,
+  writeWavMono16,
 } from '../src/index';
 import type {
   AssembleInput,
@@ -242,6 +245,70 @@ describe('buildVoiceTrack', () => {
     for (const caption of result.captions) {
       const file = voiceLinePath(cacheDir, caption.text, 'af_heart');
       expect(existsSync(file)).toBe(true);
+    }
+  });
+
+  it('regenerates a truncated cached line instead of reusing silence', async () => {
+    const root = tempRoot();
+    const listingDir = join(root, 'listing');
+    const cacheDir = join(root, 'voice');
+    mkdirSync(listingDir, { recursive: true });
+    mkdirSync(cacheDir, { recursive: true });
+
+    const edl = makeEdl({ words: THREE_LINES, durationSec: 8 });
+    const text = 'Marina Gate One, Dubai Marina.';
+    const file = voiceLinePath(cacheDir, text, 'af_heart');
+
+    // A crash mid-write: a header announcing samples that were never flushed.
+    const good = join(root, 'good.wav');
+    const samples = new Float32Array(2400);
+    samples.fill(0.2);
+    writeWavMono16(good, samples, 24000);
+    const bytes = readFileSync(good);
+    writeFileSync(file, bytes.subarray(0, 44 + 100));
+    expect(wavIsIntact(file)).toBe(false);
+
+    const engine = new FakeTts();
+    await buildVoiceTrack({
+      edl,
+      listingDir,
+      cacheDir,
+      outDir: join(root, 'out'),
+      music: null,
+      tts: engine,
+      mixer: new FakeMixer(),
+    });
+
+    expect(engine.calls.some((call) => call.endsWith(text))).toBe(true);
+    expect(wavIsIntact(file)).toBe(true);
+    expect(wavDurationSec(file)).toBeGreaterThan(0);
+  });
+
+  it('keeps one valid cache file when two exports race on the same line', async () => {
+    const root = tempRoot();
+    const listingDir = join(root, 'listing');
+    const cacheDir = join(root, 'voice');
+    mkdirSync(listingDir, { recursive: true });
+
+    const edl = makeEdl({ words: THREE_LINES, durationSec: 8 });
+    const build = () =>
+      buildVoiceTrack({
+        edl,
+        listingDir,
+        cacheDir,
+        outDir: join(root, `out-${Math.random().toString(36).slice(2, 7)}`),
+        music: null,
+        tts: new FakeTts(),
+        mixer: new FakeMixer(),
+      });
+
+    const [first, second] = await Promise.all([build(), build()]);
+    expect(first.captions).toEqual(second.captions);
+
+    for (const caption of first.captions) {
+      const file = voiceLinePath(cacheDir, caption.text, 'af_heart');
+      expect(wavIsIntact(file)).toBe(true);
+      expect(wavDurationSec(file)).toBeGreaterThan(0);
     }
   });
 

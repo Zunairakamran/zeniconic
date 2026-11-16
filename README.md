@@ -21,7 +21,9 @@ can approve or ask to change.
 - **Says why.** Every shot carries a reason; every rejected shot stays visible with
   the defect that sank it.
 - **Hybrid voice.** The agent's real lines from the footage, bridged with a local
-  Kokoro voice, ducked under a licensed bed.
+  Kokoro voice, ducked under a licensed bed. The model is a one-click, resumable
+  92 MB download in Settings: a paused or dropped download continues from the byte
+  already on disk, and exports fall back to music (with a warning) until it is there.
 - **Captions that look designed.** Bricolage 800 uppercase, two lines maximum, no
   background plate, accent on the most substantial word.
 - **Aspect-aware.** 9:16, 16:9 and 1:1 from one edit; portrait into landscape uses a
@@ -43,6 +45,10 @@ info → Run anyway**.
 
 First run asks for an OpenRouter API key. It is stored in Windows credential storage
 and never written to a listing, a log, or the installer.
+
+Voice is optional and explicit: **Settings → Voice model → Download** fetches Kokoro
+82M (92 MB) once. The download is checksummed and resumable, so closing the app or
+losing the connection costs only the bytes in flight. Everything else works without it.
 
 Requirements: Windows 10/11 x64, ~600 MB disk for the app, ~2 GB during a render.
 

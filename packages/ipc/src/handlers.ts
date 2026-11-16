@@ -34,6 +34,7 @@ import type {
   VariantPreview,
   VariantSummary,
   VoiceMode,
+  VoiceModelStatus,
 } from './contract';
 
 /** Minimal surface of `JsonStore`; a fake satisfies it in tests. */
@@ -106,9 +107,28 @@ export interface HandlerDeps {
   dataDir?: string;
   /** Electron's `shell.openPath`; resolves to an error string, or '' on success. */
   openPath?: (path: string) => Promise<string>;
+  /** Optional Kokoro downloader; absent in browser builds and plain tests. */
+  voiceModel?: VoiceModelPort;
 }
 
-export type IpcErrorCode = 'E_INVALID_INPUT' | 'E_NOT_FOUND' | 'E_PIPELINE' | 'E_CHAT';
+/**
+ * The voice-model installer. The desktop adapter owns the network and disk; the
+ * handlers only expose it and translate failures.
+ */
+export interface VoiceModelPort {
+  status(): Promise<VoiceModelStatus>;
+  /** Starts or resumes; resolves once the attempt is running, not when it ends. */
+  start(): Promise<VoiceModelStatus>;
+  /** Pauses; the engine keeps a `.part` file that the next start resumes. */
+  cancel(): Promise<VoiceModelStatus>;
+}
+
+export type IpcErrorCode =
+  | 'E_INVALID_INPUT'
+  | 'E_NOT_FOUND'
+  | 'E_PIPELINE'
+  | 'E_CHAT'
+  | 'E_VOICE_MODEL';
 
 /** Stable codes for logs and QA; the renderer shows `message`. */
 export class IpcError extends Error {
@@ -149,6 +169,9 @@ const MAX_KEY_LENGTH = 512;
 
 const FACT_KEYS = ['address', 'price', 'beds', 'baths', 'sqft', 'currency', 'confirmedAt'] as const;
 const CURRENCIES: readonly Facts['currency'][] = ['AED', 'GBP', 'USD', 'EUR'];
+
+/** A saved chat version id shares the variant slug grammar (`calm-v3`). */
+const VERSION_ID_PATTERN = /^[a-z0-9][a-z0-9-]*$/;
 
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
@@ -267,7 +290,7 @@ function requireVersionId(value: unknown): string {
     typeof value !== 'string' ||
     value.length === 0 ||
     value.length > MAX_VERSION_ID_LENGTH ||
-    !/^[a-z0-9][a-z0-9-]*$/.test(value)
+    !VERSION_ID_PATTERN.test(value)
   ) {
     throw invalid('A version id must be a short lowercase slug.');
   }
@@ -510,7 +533,7 @@ function requireDataPath(value: unknown, root: string): string {
  * same object runs in `ipcMain` and in a Vitest process.
  */
 export function createHandlers(deps: HandlerDeps): Handlers {
-  const { store, runner, pipeline, settings, chat, chooseFolder, dataDir, openPath } = deps;
+  const { store, runner, pipeline, settings, chat, chooseFolder, dataDir, openPath, voiceModel } = deps;
 
   const handlers: Handlers = {
     'listings:list': async (): Promise<ListingRecord[]> => store.list(),
@@ -639,7 +662,12 @@ export function createHandlers(deps: HandlerDeps): Handlers {
         !isRecord(result) ||
         typeof result.reply !== 'string' ||
         typeof result.diff !== 'string' ||
-        typeof result.versionId !== 'string'
+        typeof result.versionId !== 'string' ||
+        // The renderer hands this id straight back to `chat:apply`, which only
+        // accepts a slug. A service that invents anything else cannot be
+        // applied, so fail here rather than hand over a dead id.
+        !VERSION_ID_PATTERN.test(result.versionId) ||
+        result.versionId.length > MAX_VERSION_ID_LENGTH
       ) {
         throw new IpcError('E_CHAT', 'The assistant did not return a usable edit.');
       }
@@ -767,6 +795,45 @@ export function createHandlers(deps: HandlerDeps): Handlers {
         return { ok: true };
       } catch (error) {
         return { ok: false, error: messageOf(error) };
+      }
+    },
+
+    'voice:modelStatus': async (): Promise<VoiceModelStatus> => {
+      if (voiceModel === undefined) {
+        throw new IpcError(
+          'E_VOICE_MODEL',
+          'Voice model downloads need the desktop app; this browser preview cannot install it.',
+        );
+      }
+      try {
+        return await voiceModel.status();
+      } catch (error) {
+        throw new IpcError('E_VOICE_MODEL', messageOf(error));
+      }
+    },
+
+    'voice:modelDownload': async (): Promise<VoiceModelStatus> => {
+      if (voiceModel === undefined) {
+        throw new IpcError(
+          'E_VOICE_MODEL',
+          'Voice model downloads need the desktop app; this browser preview cannot install it.',
+        );
+      }
+      try {
+        return await voiceModel.start();
+      } catch (error) {
+        throw new IpcError('E_VOICE_MODEL', messageOf(error));
+      }
+    },
+
+    'voice:modelCancel': async (): Promise<VoiceModelStatus> => {
+      if (voiceModel === undefined) {
+        throw new IpcError('E_VOICE_MODEL', 'There is no voice download to cancel.');
+      }
+      try {
+        return await voiceModel.cancel();
+      } catch (error) {
+        throw new IpcError('E_VOICE_MODEL', messageOf(error));
       }
     },
   };

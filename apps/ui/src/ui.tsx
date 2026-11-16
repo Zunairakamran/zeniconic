@@ -74,9 +74,24 @@ export function Chip({ on, children, onClick }: { on?: boolean; children: ReactN
   );
 }
 
-export function Progress({ value, tone = 'brass' }: { value: number; tone?: 'brass' | 'sage' | 'clay' }) {
+export function Progress({
+  value,
+  tone = 'brass',
+  label,
+}: {
+  value: number;
+  tone?: 'brass' | 'sage' | 'clay';
+  label?: string;
+}) {
   return (
-    <div className="progress" role="progressbar" aria-valuenow={Math.round(value)} aria-valuemin={0} aria-valuemax={100}>
+    <div
+      className="progress"
+      role="progressbar"
+      aria-label={label}
+      aria-valuenow={Math.round(value)}
+      aria-valuemin={0}
+      aria-valuemax={100}
+    >
       <span className={`progress__fill progress__fill--${tone}`} style={{ width: `${Math.min(100, Math.max(0, value))}%` }} />
     </div>
   );

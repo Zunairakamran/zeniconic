@@ -56,10 +56,49 @@ The audit is a snapshot from 01:19–01:30; this file is the follow-up.
 ## Gate after the fixes
 
 - `npx tsc --noEmit` clean.
-- `npx vitest run` 779 passing.
+- `npx vitest run` 780+ passing.
 - `apps/render` suite passing (not part of `npm test`; run in CI).
 - `node scripts/e2e.mjs` 66/66.
 - `docs/design/check-contrast.mjs` both themes AA.
 - `npm run dist` produces the installer.
 - Real listing: vertical and landscape exports, 30.000 s, audio, captions, `.srt`,
   cover.
+
+## Second audit round (post-release polish)
+
+Three parallel audits: UI, shared packages, services/desktop.
+
+### UI
+
+- Removed invented figures presented as live: spend in the top bar and Home footer
+  now read `settings:get.spendUsd`; intake clip counts and dates come from the
+  listing; analysis no longer claims `$0.07`, `12 model calls` or `2 min left`;
+  variants no longer claim a rejected count; storage no longer claims free space.
+- Removed dead controls (Stop analysis, Compare, per-shot Swap, manual cover/permit)
+  or disabled them with an honest reason. They return when their channels exist
+  (`analysis:cancel`, `variants:swapShot`, `ExportRequest.cover` / `permitLine`).
+- Voice model card: a real `Checking` state, `aria-busy`, labelled progress, and no
+  download button until the status has loaded.
+- Model `Test` buttons no longer fake a pass; they say no test has run.
+- E2E stays 66/66; both themes AA.
+
+### Packages
+
+- `chat:send` now validates the returned `versionId` with the same slug pattern as
+  `chat:apply`, so a bad id cannot be reported as a saved edit.
+- Tests prove the new `voice:model*` channels take no arguments (hostile extras are
+  dropped), `CHANNELS` matches the handler table exactly, and unknown channels are
+  rejected.
+- Fixed the voice IPC test helper's literal type so the suite compiles.
+
+### Voice model (new)
+
+- Settings → Voice model downloads Kokoro 82M (92 MB) explicitly: four pinned files,
+  SHA-256 each, `<file>.part` checkpoint, `Range` + `If-Range` resume, retry once,
+  pause without deleting the partial, checksum failure deletes only the bad file.
+- Files land in the transformers cache layout and `createKokoroEngine` points
+  `env.cacheDir` at it, so a verified local model is used with no network call.
+- The installer now ships the ONNX runtime (win32-x64 only), phonemizer and sharp,
+  so the download is usable in the packaged app rather than only in a checkout.
+- Exports never download silently: a missing model is a warning that names Settings.
+

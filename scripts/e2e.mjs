@@ -156,9 +156,9 @@ const routes = [
     id: 'settings',
     heading: '.settings__head h1',
     title: 'Settings',
-    note: '7 cards, 3 models, theme switch, log tail',
+    note: '8 cards, 3 models, voice model, theme switch, log tail',
     checks: [
-      { label: 'cards', expr: `count('.settings__card')`, op: 'equals', value: 7 },
+      { label: 'cards', expr: `count('.settings__card')`, op: 'equals', value: 8 },
       { label: 'model rows', expr: `count('.settings__card--models .settings__model')`, op: 'equals', value: 3 },
       { label: 'theme buttons', expr: `count('.settings__theme button')`, op: 'equals', value: 2 },
       { label: 'log rows', expr: `count('.settings__log-row')`, op: 'equals', value: 6 },
