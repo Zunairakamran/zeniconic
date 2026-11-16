@@ -1,0 +1,370 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://zeniconic.app/schema/edl-1.0.0.json",
+  "title": "Zeniconic EDL",
+  "description": "The single source of truth for one variant. A render is a pure function of an EDL plus its referenced media. Times are seconds (3dp), never frames. Runtime validation additionally enforces: clip.outSec > clip.inSec; clips ordered and contiguous except for explicit gaps; sum of (outSec-inSec)/speed equals format.targetDurationSec within ±0.5s; every overlay interval inside the timeline; every clip.src resolves to an indexed source.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["edlVersion", "id", "listingId", "createdAt", "format", "look", "canvas", "clips", "overlays", "audio", "captions", "provenance"],
+  "properties": {
+    "edlVersion": { "const": "1.0.0" },
+    "id": { "type": "string", "pattern": "^edl_[a-z0-9-]+_v[0-9]+$" },
+    "listingId": { "type": "string", "minLength": 1 },
+    "createdAt": { "type": "string", "format": "date-time" },
+    "parentId": {
+      "type": ["string", "null"],
+      "description": "Previous EDL id this revision derives from; null for v1."
+    },
+    "format": { "$ref": "#/$defs/FormatRef" },
+    "look": { "$ref": "#/$defs/LookRef" },
+    "canvas": { "$ref": "#/$defs/Canvas" },
+    "clips": {
+      "type": "array",
+      "minItems": 1,
+      "maxItems": 40,
+      "items": { "$ref": "#/$defs/Clip" }
+    },
+    "overlays": {
+      "type": "array",
+      "maxItems": 30,
+      "items": { "$ref": "#/$defs/Overlay" }
+    },
+    "audio": { "$ref": "#/$defs/Audio" },
+    "captions": { "$ref": "#/$defs/Captions" },
+    "review": { "$ref": "#/$defs/Review" },
+    "provenance": { "$ref": "#/$defs/Provenance" }
+  },
+  "$defs": {
+    "Profile": {
+      "type": "string",
+      "enum": ["vertical-social", "feed-portrait", "landscape", "pin"]
+    },
+    "SafeArea": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["top", "bottom", "left", "right"],
+      "description": "Pixels that must stay clear of text and logos.",
+      "properties": {
+        "top": { "type": "integer", "minimum": 0 },
+        "bottom": { "type": "integer", "minimum": 0 },
+        "left": { "type": "integer", "minimum": 0 },
+        "right": { "type": "integer", "minimum": 0 }
+      }
+    },
+    "Canvas": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["profile", "width", "height", "fps", "safeArea"],
+      "properties": {
+        "profile": { "$ref": "#/$defs/Profile" },
+        "width": { "type": "integer", "minimum": 240, "maximum": 4096 },
+        "height": { "type": "integer", "minimum": 240, "maximum": 4096 },
+        "fps": { "type": "number", "minimum": 12, "maximum": 120 },
+        "safeArea": { "$ref": "#/$defs/SafeArea" }
+      }
+    },
+    "FormatRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label", "targetDurationSec"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": [
+            "cinematic_hero",
+            "social_hook",
+            "room_walkthrough",
+            "just_listed",
+            "amenity_lifestyle",
+            "price_drop",
+            "agent_intro",
+            "before_after",
+            "drone_hero",
+            "vertical_tour"
+          ]
+        },
+        "label": { "type": "string" },
+        "targetDurationSec": { "type": "number", "minimum": 5, "maximum": 90 }
+      }
+    },
+    "LookRef": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "label"],
+      "properties": {
+        "id": {
+          "type": "string",
+          "enum": ["calm", "social", "walkthrough", "editorial"]
+        },
+        "label": { "type": "string" },
+        "description": { "type": "string" }
+      }
+    },
+    "Transition": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["type", "durationSec"],
+      "properties": {
+        "type": { "type": "string", "enum": ["cut", "dissolve", "slide", "whip"] },
+        "durationSec": { "type": "number", "minimum": 0, "maximum": 1.5 }
+      }
+    },
+    "CropPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "x", "y", "scale"],
+      "description": "Normalised crop window centre and zoom. t is relative to the clip (0..1).",
+      "properties": {
+        "t": { "type": "number", "minimum": 0, "maximum": 1 },
+        "x": { "type": "number", "minimum": 0, "maximum": 1 },
+        "y": { "type": "number", "minimum": 0, "maximum": 1 },
+        "scale": { "type": "number", "minimum": 1, "maximum": 2.5 }
+      }
+    },
+    "Transform": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode", "focus", "path"],
+      "description": "How a source clip fills the canvas. mode=cover crops; pad_blur letterboxes over a blurred fill; contain fits exactly.",
+      "properties": {
+        "mode": { "type": "string", "enum": ["cover", "pad_blur", "contain"] },
+        "focus": {
+          "type": "string",
+          "enum": ["saliency", "center", "left", "right", "top", "bottom"]
+        },
+        "path": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 12,
+          "items": { "$ref": "#/$defs/CropPoint" }
+        }
+      }
+    },
+    "Clip": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "sourceId", "src", "inSec", "outSec", "speed", "volumeDb", "transform", "transitionIn", "reason"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^c[0-9]{2,3}$" },
+        "sourceId": { "type": "string", "pattern": "^s_[a-f0-9]{8}$" },
+        "src": {
+          "type": "string",
+          "description": "Path relative to the listing raw/ directory.",
+          "minLength": 1
+        },
+        "inSec": { "type": "number", "minimum": 0 },
+        "outSec": { "type": "number", "minimum": 0 },
+        "speed": { "type": "number", "minimum": 0.5, "maximum": 2 },
+        "volumeDb": { "type": "number", "minimum": -60, "maximum": 12 },
+        "room": {
+          "type": "string",
+          "enum": [
+            "exterior", "building", "entry", "living", "kitchen", "dining",
+            "bedroom", "bathroom", "balcony", "view", "amenity", "unknown"
+          ]
+        },
+        "transform": { "$ref": "#/$defs/Transform" },
+        "transitionIn": { "$ref": "#/$defs/Transition" },
+        "transitionOut": { "$ref": "#/$defs/Transition" },
+        "reason": {
+          "type": "string",
+          "maxLength": 160,
+          "description": "User-facing justification, plain language. Shown in the shot inspector."
+        },
+        "scoreAtSelection": { "type": "number", "minimum": 0, "maximum": 1 }
+      }
+    },
+    "Overlay": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "kind", "inSec", "outSec", "anchor", "style"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^o[0-9]{2,3}$" },
+        "kind": {
+          "type": "string",
+          "enum": ["price", "spec_row", "address", "logo", "lower_third", "cta", "disclaimer", "room_label"]
+        },
+        "text": { "type": "string", "maxLength": 90 },
+        "subtext": { "type": "string", "maxLength": 90 },
+        "inSec": { "type": "number", "minimum": 0 },
+        "outSec": { "type": "number", "minimum": 0 },
+        "anchor": {
+          "type": "string",
+          "enum": ["top_left", "top_center", "top_right", "center", "bottom_left", "bottom_center", "bottom_right"]
+        },
+        "style": {
+          "type": "string",
+          "enum": ["price_lower", "spec_pill", "address_tag", "logo_corner", "cta_card", "caption", "small_print"]
+        },
+        "maxWidthPct": { "type": "number", "minimum": 20, "maximum": 100 },
+        "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "animation": {
+          "type": "string",
+          "enum": ["none", "fade", "rise", "slide_in", "count_up"]
+        }
+      }
+    },
+    "Captions": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["burn", "sidecar", "both", "none"] },
+        "style": {
+          "type": "string",
+          "enum": [
+            "clean_lower",
+            "bold_center",
+            "editorial_serif",
+            "social_bold",
+            "clean_reel",
+            "editorial"
+          ]
+        },
+        "language": { "type": "string", "default": "en" },
+        "words": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["text", "startSec", "endSec"],
+            "properties": {
+              "text": { "type": "string" },
+              "startSec": { "type": "number", "minimum": 0 },
+              "endSec": { "type": "number", "minimum": 0 }
+            }
+          }
+        }
+      }
+    },
+    "Music": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["trackId", "src", "gainDb", "duckUnderVoiceDb", "beatGrid"],
+      "properties": {
+        "trackId": { "type": "string" },
+        "src": { "type": "string" },
+        "gainDb": { "type": "number", "minimum": -40, "maximum": 12 },
+        "duckUnderVoiceDb": { "type": "number", "minimum": -30, "maximum": 0 },
+        "beatGrid": {
+          "type": "array",
+          "maxItems": 2400,
+          "items": { "type": "number", "minimum": 0 },
+          "description": "Beat times in seconds, ascending. Cached per track so cuts snap without re-analysis."
+        },
+        "license": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["source", "licenseId"],
+          "properties": {
+            "source": { "type": "string", "enum": ["ai_generated", "royalty_free", "user_supplied"] },
+            "licenseId": { "type": "string" },
+            "attribution": { "type": "string" }
+          }
+        }
+      }
+    },
+    "Voice": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["mode"],
+      "properties": {
+        "mode": { "type": "string", "enum": ["keep", "clean", "replace_tts", "mute"] },
+        "src": { "type": "string" },
+        "text": { "type": "string", "maxLength": 1200 },
+        "voiceId": { "type": "string" },
+        "enhance": {
+          "type": "object",
+          "additionalProperties": false,
+          "properties": {
+            "denoise": { "type": "boolean", "default": true },
+            "dereverb": { "type": "boolean", "default": false },
+            "isolate": { "type": "boolean", "default": false },
+            "deess": { "type": "boolean", "default": true }
+          }
+        }
+      }
+    },
+    "Audio": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["music", "voice", "mix"],
+      "properties": {
+        "music": { "$ref": "#/$defs/Music" },
+        "voice": { "$ref": "#/$defs/Voice" },
+        "mix": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["lufs"],
+          "properties": {
+            "lufs": { "type": "number", "minimum": -30, "maximum": -8 },
+            "truePeakDbtp": { "type": "number", "minimum": -3, "maximum": 0 }
+          }
+        }
+      }
+    },
+    "Review": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["score", "checks"],
+      "properties": {
+        "score": { "type": "number", "minimum": 0, "maximum": 1 },
+        "checks": {
+          "type": "array",
+          "items": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": ["id", "passed", "detail"],
+            "properties": {
+              "id": {
+                "type": "string",
+                "enum": [
+                  "duration", "no_black_frames", "no_freeze", "text_safe_area",
+                  "cta_legible", "room_order", "loudness", "no_repeated_shot",
+                  "hook_visible", "facts_present"
+                ]
+              },
+              "passed": { "type": "boolean" },
+              "detail": { "type": "string", "maxLength": 200 }
+            }
+          }
+        },
+        "reviewedBy": { "type": "string" }
+      }
+    },
+    "Provenance": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["pipelineVersion", "models", "promptVersions", "costUsd"],
+      "properties": {
+        "pipelineVersion": { "type": "string" },
+        "sourceIndexHash": {
+          "type": "string",
+          "description": "Hash of the footage index this plan was built from. Mismatch invalidates the plan."
+        },
+        "models": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tagging", "planning"],
+          "properties": {
+            "tagging": { "type": "string" },
+            "planning": { "type": "string" },
+            "review": { "type": "string" },
+            "tts": { "type": "string" }
+          }
+        },
+        "promptVersions": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["tagging", "planning"],
+          "properties": {
+            "tagging": { "type": "string" },
+            "planning": { "type": "string" }
+          }
+        },
+        "costUsd": { "type": "number", "minimum": 0 },
+        "renderCacheHits": { "type": "integer", "minimum": 0 }
+      }
+    }
+  }
+}

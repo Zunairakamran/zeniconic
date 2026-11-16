@@ -1,0 +1,276 @@
+/* Zeniconic design tokens — single source of truth.
+   Direction: editorial property brochure that happens to render video.
+   Warm paper shell, near-black preview stage, brass accent. Never "SaaS purple". */
+
+@import url('https://fonts.googleapis.com/css2?family=Archivo:wght@400..700&family=Bricolage+Grotesque:opsz,wght@12..96,400..800&display=swap');
+
+:root {
+  /* ── Colour ───────────────────────────────────────────────────────── */
+  --paper:        #F7F4EF;  /* app background */
+  --paper-deep:   #EFEAE1;  /* rails, inset panels */
+  --paper-raised: #FFFDF9;  /* cards, sheets */
+  --ink:          #14120F;  /* primary text */
+  --ink-70:       #4A453D;  /* secondary text */
+  --ink-45:       #6B6458;  /* tertiary, captions. 5.33:1 paper / 4.88:1 paper-deep */
+  --ink-20:       #C9C2B4;  /* disabled text */
+  --hairline:     #DED7C9;  /* 1px borders, always */
+  --hairline-strong: #C4BAA8;
+  --border-interactive: #8A8274; /* 3.46:1 on paper — inputs need a visible edge */
+
+  --brass:        #B08A4A;  /* fills, progress, borders. Never body text (2.91:1) */
+  --brass-dark:   #8E6C33;  /* pressed fill */
+  --brass-hover:  #A8813F;  /* primary hover fill; ink label 5.23:1 */
+  --brass-text:   #7A5A24;  /* brass as text: 5.77:1 on paper, 5.17:1 on wash */
+  --brass-wash:   #F1E7D6;  /* selected rows, active chips */
+  --on-brass:     #14120F;  /* label on a brass fill; 5.86:1 */
+  --sage:         #6F7A68;  /* success, approved */
+  --sage-wash:    #E8EDE4;
+  --clay:         #A5443A;  /* destructive, failure */
+  --clay-wash:    #F5E4E1;
+  --amber:        #B4872C;  /* warning, needs attention */
+  --amber-wash:   #F8EEDA;
+
+  /* Status text is a token, not a literal in .badge, so dark mode can override it. */
+  --success-text: #4F5B49;  /* 6.04:1 on sage-wash */
+  --warn-text:    #7A5A1C;  /* 5.51:1 on amber-wash */
+  --danger-text:  #A5443A;  /* 4.89:1 on clay-wash */
+
+  --stage:        #0E0D0B;  /* video preview background */
+  --stage-80:     #1A1815;  /* stage chrome, scrubber track */
+
+  /* ── Type ─────────────────────────────────────────────────────────── */
+  --font-display: 'Bricolage Grotesque', 'Archivo', 'Helvetica Neue', Arial, sans-serif;
+  --font-ui:      'Archivo', 'Helvetica Neue', Arial, sans-serif;
+  --font-mono:    'SF Mono', 'Cascadia Mono', Consolas, monospace;
+
+  --text-2xs: 10px;   /* meta in dense tables, uppercase + tracking */
+  --text-xs:  11px;
+  --text-sm:  13px;
+  --text-md:  15px;   /* UI default */
+  --text-lg:  18px;
+  --text-xl:  24px;
+  --text-2xl: 32px;
+  --text-3xl: 44px;   /* display only, always --font-display */
+  --text-4xl: 60px;
+
+  --tracking-caps: 0.12em;
+  --leading-tight: 1.12;
+  --leading-normal: 1.45;
+
+  /* ── Space (4px base) ─────────────────────────────────────────────── */
+  --s-1: 4px;  --s-2: 8px;  --s-3: 12px; --s-4: 16px;
+  --s-5: 20px; --s-6: 24px; --s-7: 32px; --s-8: 40px;
+  --s-9: 56px; --s-10: 72px; --s-11: 96px;
+
+  /* ── Shape ────────────────────────────────────────────────────────── */
+  --r-sm: 6px;
+  --r-md: 10px;
+  --r-lg: 14px;
+  --r-pill: 999px;
+  --border: 1px solid var(--hairline);
+
+  --shadow-sm: 0 1px 0 rgba(20, 18, 15, 0.04);
+  --shadow-md: 0 2px 6px rgba(20, 18, 15, 0.06), 0 1px 2px rgba(20, 18, 15, 0.04);
+  --shadow-lg: 0 12px 32px rgba(20, 18, 15, 0.14), 0 2px 8px rgba(20, 18, 15, 0.06);
+  --shadow-stage: 0 20px 60px rgba(20, 18, 15, 0.28);
+
+  /* ── Motion ───────────────────────────────────────────────────────── */
+  --ease-out: cubic-bezier(0.22, 1, 0.36, 1);
+  --ease-in-out: cubic-bezier(0.65, 0, 0.35, 1);
+  --dur-fast: 120ms;
+  --dur-base: 200ms;
+  --dur-slow: 420ms;
+
+  /* ── Layout ───────────────────────────────────────────────────────── */
+  --rail-nav: 232px;
+  --panel-chat: 380px;
+  --max-content: 1180px;
+  --h-control: 36px;   /* buttons, inputs */
+  --h-control-lg: 44px;
+}
+
+/* ── Base ─────────────────────────────────────────────────────────── */
+* { box-sizing: border-box; }
+
+body {
+  margin: 0;
+  background: var(--paper);
+  color: var(--ink);
+  font-family: var(--font-ui);
+  font-size: var(--text-md);
+  line-height: var(--leading-normal);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Paper grain — one texture on the shell, never on content cards. */
+.grain::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  opacity: 0.035;
+  z-index: 0;
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='120' height='120'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3'/%3E%3C/filter%3E%3Crect width='100%25' height='100%25' filter='url(%23n)'/%3E%3C/svg%3E");
+}
+
+h1, h2, h3 {
+  font-family: var(--font-display);
+  font-weight: 650;
+  margin: 0;
+  letter-spacing: -0.025em;
+  font-optical-sizing: auto;
+  line-height: var(--leading-tight);
+}
+h1 { font-size: var(--text-3xl); line-height: 1.02; }
+h2 { font-size: var(--text-xl); line-height: 1.08; }
+h3 { font-size: var(--text-lg); line-height: 1.18; }
+
+.caps {
+  font-size: var(--text-2xs);
+  text-transform: uppercase;
+  letter-spacing: var(--tracking-caps);
+  color: var(--ink-45);
+  font-weight: 600;
+}
+
+.mono { font-family: var(--font-mono); font-size: var(--text-xs); }
+
+/* ── Controls ─────────────────────────────────────────────────────── */
+.btn {
+  height: var(--h-control);
+  padding: 0 var(--s-4);
+  border-radius: var(--r-sm);
+  border: var(--border);
+  background: var(--paper-raised);
+  color: var(--ink);
+  font: 500 var(--text-sm)/1 var(--font-ui);
+  display: inline-flex; align-items: center; gap: var(--s-2);
+  cursor: pointer;
+  transition: background var(--dur-fast) var(--ease-out), border-color var(--dur-fast) var(--ease-out);
+}
+.btn:hover { background: var(--paper-deep); border-color: var(--hairline-strong); }
+.btn--primary {
+  background: var(--brass); border-color: var(--brass-dark); color: var(--on-brass);
+}
+.btn--primary:hover { background: var(--brass-hover); }
+.btn--ghost { background: transparent; border-color: transparent; }
+.btn--ghost:hover { background: var(--paper-deep); }
+.btn--lg { height: var(--h-control-lg); padding: 0 var(--s-5); font-size: var(--text-md); }
+.btn:disabled { color: var(--ink-20); background: var(--paper-deep); border-color: var(--hairline); cursor: not-allowed; }
+
+.chip {
+  height: 30px; padding: 0 var(--s-3);
+  border-radius: var(--r-pill);
+  border: var(--border);
+  background: var(--paper-raised);
+  font-size: var(--text-sm);
+  display: inline-flex; align-items: center; gap: var(--s-2);
+  cursor: pointer;
+  transition: all var(--dur-fast) var(--ease-out);
+}
+.chip:hover { border-color: var(--hairline-strong); }
+.chip--on { background: var(--brass-wash); border-color: var(--brass); color: var(--brass-text); font-weight: 600; }
+
+.field {
+  height: var(--h-control);
+  width: 100%;
+  padding: 0 var(--s-3);
+  border-radius: var(--r-sm);
+  border: 1px solid var(--border-interactive);
+  background: var(--paper-raised);
+  font: 400 var(--text-md)/1 var(--font-ui);
+  color: var(--ink);
+}
+.field:focus-visible { outline: 2px solid var(--brass-text); outline-offset: 1px; }
+
+/* ── Cards & panels ───────────────────────────────────────────────── */
+.card {
+  background: var(--paper-raised);
+  border: var(--border);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-sm);
+}
+.panel {
+  background: var(--paper-deep);
+  border-right: var(--border);
+}
+.divider { height: 1px; background: var(--hairline); border: 0; margin: 0; }
+
+/* ── Status ───────────────────────────────────────────────────────── */
+.badge {
+  display: inline-flex; align-items: center; gap: 6px;
+  height: 22px; padding: 0 8px;
+  border-radius: var(--r-sm);
+  font-size: var(--text-xs); font-weight: 600;
+  letter-spacing: 0.01em;
+}
+.badge--ok    { background: var(--sage-wash);  color: var(--success-text); }
+.badge--work  { background: var(--brass-wash); color: var(--brass-text); }
+.badge--warn  { background: var(--amber-wash); color: var(--warn-text); }
+.badge--fail  { background: var(--clay-wash);  color: var(--danger-text); }
+.badge--idle  { background: var(--paper-deep); color: var(--ink-45); }
+
+/* ── Video stage ──────────────────────────────────────────────────── */
+.stage {
+  background: var(--stage);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-stage);
+  overflow: hidden;
+  position: relative;
+}
+
+/* ── Dark theme ──────────────────────────────────────────────────────
+   Not an inversion: the shell drops to warm near-black, surfaces rise
+   toward the light, and brass lightens so it can still be read. The video
+   stage stays the darkest surface in the app, separated by a hairline
+   rather than by luminance. Toggle with <html data-theme="dark">. */
+:root[data-theme="dark"] {
+  --paper:        #171410;
+  --paper-deep:   #110F0C;
+  --paper-raised: #201C16;
+  --ink:          #F3EEE3;
+  --ink-70:       #C6BEB0;
+  --ink-45:       #948C7D;
+  --ink-20:       #595347;
+  --hairline:     #2E2A23;
+  --hairline-strong: #403A31;
+  --border-interactive: #6E6659;
+
+  --brass:        #B08A4A;
+  --brass-dark:   #8E6C33;
+  --brass-hover:  #C79A55;
+  --brass-text:   #D6AC66;
+  --brass-wash:   #2B2216;
+  --on-brass:     #171410;
+
+  --sage:         #8FA085;
+  --sage-wash:    #1F2519;
+  --clay:         #D06B5C;
+  --clay-wash:    #2B1A17;
+  --amber:        #D9A544;
+  --amber-wash:   #2A2114;
+
+  --success-text: #A8BC9C;
+  --warn-text:    #E3B45F;
+  --danger-text:  #E58F80;
+
+  --stage:        #0A0907;
+  --stage-80:     #141210;
+
+  --shadow-sm: 0 1px 0 rgba(0, 0, 0, 0.4);
+  --shadow-md: 0 2px 8px rgba(0, 0, 0, 0.5), 0 1px 2px rgba(0, 0, 0, 0.4);
+  --shadow-lg: 0 14px 40px rgba(0, 0, 0, 0.6), 0 2px 8px rgba(0, 0, 0, 0.5);
+  --shadow-stage: 0 24px 70px rgba(0, 0, 0, 0.7);
+}
+
+:root[data-theme="dark"] .grain::before { opacity: 0.05; }
+
+/* Native form controls and scrollbars should follow the theme. */
+:root { color-scheme: light; }
+:root[data-theme="dark"] { color-scheme: dark; }
+
+/* ── Focus & accessibility ────────────────────────────────────────── */
+:focus-visible { outline: 2px solid var(--brass-text); outline-offset: 2px; }
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation-duration: 1ms !important; transition-duration: 1ms !important; }
+}

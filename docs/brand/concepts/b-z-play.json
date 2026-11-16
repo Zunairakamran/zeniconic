@@ -1,0 +1,29 @@
+{
+  "model": "google/gemini-3-pro-image",
+  "prompt": "Flat vector monogram logo for a premium real-estate video brand. The capital letter Z built from three thick geometric strokes, where the middle diagonal is replaced by a right-pointing play triangle, so it reads as both a Z and a play button. Deep ink (#14120F) letterform on warm cream (#F7F4EF), with the triangle in brass (#B08A4A). Minimal, bold, editorial, luxury. Sharp corners, even stroke weight, no gradient, no shadow, no 3D. Centred, generous margins. Absolutely NO TEXT beyond the single Z shape, no words, no watermark, no mockup. Square 1:1.",
+  "usage": {
+    "prompt_tokens": 141,
+    "completion_tokens": 1478,
+    "total_tokens": 1619,
+    "cost": 0.138978,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.138978,
+      "upstream_inference_prompt_cost": 0.000282,
+      "upstream_inference_completions_cost": 0.138696
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 358,
+      "image_tokens": 1120,
+      "audio_tokens": 0
+    }
+  },
+  "text": null,
+  "file": "D:\\video\\docs\\brand\\concepts\\b-z-play.png"
+}

@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "id": "editorial",
+  "label": "Editorial",
+  "pacing": {
+    "minShotSec": 2.8,
+    "maxShotSec": 4.0,
+    "targetAvgShotSec": 3.4
+  },
+  "transitions": {
+    "in": "dissolve",
+    "out": "dissolve",
+    "durationSec": 0.62,
+    "everyNthCut": 1
+  },
+  "overlays": {
+    "price": "price_lower",
+    "address": "address_tag",
+    "introAnimation": "fade",
+    "outroAnimation": "fade"
+  },
+  "captions": {
+    "mode": "burn",
+    "style": "editorial_serif"
+  },
+  "music": {
+    "mood": "warm",
+    "energy": 2
+  },
+  "color": {
+    "saturation": 0.92,
+    "contrast": 0.98,
+    "warmth": 0.07
+  }
+}

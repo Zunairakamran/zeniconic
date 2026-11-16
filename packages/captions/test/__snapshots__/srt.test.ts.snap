@@ -1,0 +1,17 @@
+// Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
+
+exports[`toSrt > matches the three-cue SRT snapshot 1`] = `
+"1
+00:00:00,000 --> 00:00:01,750
+Marina Gate 1,
+Dubai Marina
+
+2
+00:00:01,830 --> 00:00:03,200
+Three bedrooms
+
+3
+00:00:03,500 --> 00:00:04,900
+Two baths
+"
+`;

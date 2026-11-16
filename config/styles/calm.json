@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "id": "calm",
+  "label": "Calm",
+  "pacing": {
+    "minShotSec": 2.4,
+    "maxShotSec": 4.5,
+    "targetAvgShotSec": 3.0
+  },
+  "transitions": {
+    "in": "dissolve",
+    "out": "dissolve",
+    "durationSec": 0.45,
+    "everyNthCut": 1
+  },
+  "overlays": {
+    "price": "price_lower",
+    "address": "address_tag",
+    "introAnimation": "rise",
+    "outroAnimation": "fade"
+  },
+  "captions": {
+    "mode": "burn",
+    "style": "clean_lower"
+  },
+  "music": {
+    "mood": "calm",
+    "energy": 2
+  },
+  "color": {
+    "saturation": 1.0,
+    "contrast": 1.02,
+    "warmth": 0.04
+  }
+}

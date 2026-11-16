@@ -1,0 +1,26 @@
+/*
+ * Source fonts for the renderer, downloaded from Google Fonts and committed.
+ * Both are SIL Open Font Licence 1.1; Bricolage Grotesque (display) and Archivo
+ * (UI). No CDN request is made at render time.
+ *
+ * These relative URLs work when this directory is the public directory, as it
+ * is in Studio preview. The engine embeds the same files as data URIs
+ * (`src/fonts.generated.ts`) because the render points Remotion's public
+ * directory at the listing workspace instead.
+ */
+
+@font-face {
+  font-family: 'Bricolage Grotesque';
+  font-style: normal;
+  font-weight: 400 800;
+  font-display: block;
+  src: url('./bricolage-grotesque-latin-var.woff2') format('woff2');
+}
+
+@font-face {
+  font-family: 'Archivo';
+  font-style: normal;
+  font-weight: 100 900;
+  font-display: block;
+  src: url('./archivo-latin-var.woff2') format('woff2');
+}

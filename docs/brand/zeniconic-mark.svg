@@ -1,0 +1,5 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Zeniconic">
+  <!-- Z in the current colour; brass play triangle set into the diagonal. -->
+  <path fill="currentColor" d="M10 10h44v13L24 44h30v13H10V44l30-21H10z"/>
+  <path fill="#B08A4A" d="M24 20v24l26-12z"/>
+</svg>

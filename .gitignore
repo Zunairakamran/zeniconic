@@ -1,0 +1,48 @@
+# Dependencies
+node_modules/
+.pnpm-store/
+
+# Build output
+dist/
+build/
+out/
+release/
+*.tsbuildinfo
+
+# Runtime data — never committed. Real client footage.
+data/
+cache/
+logs/
+*.log
+
+# Local config and secrets
+.env
+.env.*
+!.env.example
+config.local.json
+
+# OS / editor
+.DS_Store
+Thumbs.db
+desktop.ini
+.vscode/
+.idea/
+
+# Test artefacts
+coverage/
+test-results/
+playwright-report/
+*.snap.tmp
+
+# Generated voice and scratch renders
+data/voice/
+data/voice-final/
+data/tmp/
+.tmp-visual/
+build/
+release/
+
+# The NSIS icon is a build input, not build output; a clean clone needs it.
+!build/
+!build/icon.ico
+!build/icon.png

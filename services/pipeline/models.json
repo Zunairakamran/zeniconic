@@ -1,0 +1,77 @@
+{
+  "pinnedAt": "2026-11-15",
+  "pricesCheckedAt": "2026-11-15",
+  "currency": "USD",
+  "units": "per million tokens unless noted",
+  "roles": {
+    "tagging": {
+      "model": "google/gemini-3.8-flash",
+      "input": 0.825,
+      "output": 4.125,
+      "inputModalities": ["image", "video", "audio", "file", "text"],
+      "why": "Cheapest model that accepts a contact sheet and the voiceover audio in one call."
+    },
+    "planning": {
+      "model": "openai/gpt-6-astra",
+      "input": 10.0,
+      "output": 50.0,
+      "inputModalities": ["text", "image"],
+      "why": "Tool calling and judgement for shot selection and the refine chat."
+    },
+    "review": {
+      "model": "google/gemini-4-carbon",
+      "input": 2.0,
+      "output": 10.0,
+      "inputModalities": ["image", "video", "text"],
+      "why": "Native video input for scoring the rendered draft."
+    },
+    "music": {
+      "model": "google/lyria-3-pro-preview",
+      "pricing": "metered per generated track",
+      "why": "Music beds for the bank; generated once, reused with cached beat grids."
+    },
+    "tts": {
+      "model": "openai/gpt-audio",
+      "input": 2.5,
+      "output": 2.5,
+      "pricing": "per audio token",
+      "why": "Optional voice replacement when the realtor's take cannot be rescued."
+    }
+  },
+  "budgets": {
+    "monthlyCapUsd": 20,
+    "perListingDefaultUsd": 1.0,
+    "perListingAbsoluteUsd": 2.0,
+    "warnAtUsd": 0.6,
+    "dailyCapUsd": 5.0
+  },
+  "routing": {
+    "tagging": {
+      "variant": "floor",
+      "why": "High-volume contact sheets. Cheapest provider wins; quality is gated by the bake-off before this is trusted."
+    },
+    "planning": {
+      "variant": "nitro",
+      "why": "Interactive: the user is waiting on a plan or a chat reply. Throughput beats a few tenths of a cent."
+    },
+    "review": {
+      "variant": "auto",
+      "why": "Runs unattended in the background; let OpenRouter pick the healthy provider."
+    },
+    "music": { "variant": "auto", "why": "Metered per track, not per token." },
+    "tts": { "variant": "auto", "why": "Only used when a voiceover must be replaced." }
+  },
+  "caching": {
+    "stablePrefix": true,
+    "minPrefixTokens": 1024,
+    "policy": "System instructions, JSON schema and style guide go first and never change between calls in a stage; variable content (contact sheet, shot table, user request) goes last. Anthropic models get an explicit ephemeral cache_control breakpoint; Gemini and OpenAI cache long stable prefixes implicitly.",
+    "measure": "Record usage.prompt_tokens_details.cached_tokens and usage.cache_discount on every call; net cost = estimate - cache_discount."
+  },
+  "upscaling": {
+    "note": "Opt-in, per file, priced before it runs. Never part of a batch.",
+    "providers": {
+      "fal/topaz": { "perSecondUpTo720p": 0.01, "perSecond720to1080": 0.02, "perSecondAbove1080": 0.08, "sixtyFpsMultiplier": 2 },
+      "fal/bytedance": { "perSecond1080p": 0.0072 }
+    }
+  }
+}

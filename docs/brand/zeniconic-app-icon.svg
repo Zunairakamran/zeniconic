@@ -1,0 +1,7 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" role="img" aria-label="Zeniconic app icon">
+  <rect width="128" height="128" rx="28" fill="#14120F"/>
+  <g transform="translate(24 20) scale(1.25)">
+    <path fill="#F3EEE3" d="M10 10h44v13L24 44h30v13H10V44l30-21H10z"/>
+    <path fill="#B08A4A" d="M24 20v24l26-12z"/>
+  </g>
+</svg>

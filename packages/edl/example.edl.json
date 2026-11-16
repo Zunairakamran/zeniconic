@@ -1,0 +1,351 @@
+{
+  "edlVersion": "1.0.0",
+  "id": "edl_cinematic-calm_v3",
+  "parentId": "edl_cinematic-calm_v2",
+  "listingId": "2026-11-14-14-oak-avenue",
+  "createdAt": "2026-11-14T16:42:09.000Z",
+  "format": {
+    "id": "cinematic_hero",
+    "label": "Cinematic hero",
+    "targetDurationSec": 30
+  },
+  "look": {
+    "id": "calm",
+    "label": "Calm",
+    "description": "Slow push-ins, 2.8-4.2s cuts, serif price card, no whip transitions."
+  },
+  "canvas": {
+    "profile": "vertical-social",
+    "width": 1080,
+    "height": 1920,
+    "fps": 30,
+    "safeArea": { "top": 250, "bottom": 340, "left": 60, "right": 120 }
+  },
+  "clips": [
+    {
+      "id": "c01",
+      "sourceId": "s_4f2a1b9c",
+      "src": "raw/01_exterior_front.mp4",
+      "inSec": 12.4,
+      "outSec": 14.9,
+      "speed": 1,
+      "volumeDb": -6,
+      "room": "exterior",
+      "transform": {
+        "mode": "cover",
+        "focus": "saliency",
+        "path": [
+          { "t": 0, "x": 0.5, "y": 0.46, "scale": 1.12 },
+          { "t": 1, "x": 0.52, "y": 0.44, "scale": 1.16 }
+        ]
+      },
+      "transitionIn": { "type": "cut", "durationSec": 0 },
+      "transitionOut": { "type": "cut", "durationSec": 0 },
+      "reason": "Best facade angle, even light, no cars in the driveway.",
+      "scoreAtSelection": 0.91
+    },
+    {
+      "id": "c02",
+      "sourceId": "s_8ba1c02d",
+      "src": "raw/04_living_wide.mp4",
+      "inSec": 2.1,
+      "outSec": 6.1,
+      "speed": 1,
+      "volumeDb": -60,
+      "room": "living",
+      "transform": {
+        "mode": "cover",
+        "focus": "saliency",
+        "path": [
+          { "t": 0, "x": 0.48, "y": 0.5, "scale": 1.08 },
+          { "t": 0.5, "x": 0.5, "y": 0.5, "scale": 1.12 },
+          { "t": 1, "x": 0.52, "y": 0.5, "scale": 1.15 }
+        ]
+      },
+      "transitionIn": { "type": "cut", "durationSec": 0 },
+      "reason": "Widest living shot, window light balanced, stable gimbal push.",
+      "scoreAtSelection": 0.88
+    },
+    {
+      "id": "c03",
+      "sourceId": "s_c71e9a44",
+      "src": "raw/06_kitchen_island.mp4",
+      "inSec": 1.8,
+      "outSec": 5.3,
+      "speed": 1,
+      "volumeDb": -60,
+      "room": "kitchen",
+      "transform": {
+        "mode": "cover",
+        "focus": "center",
+        "path": [
+          { "t": 0, "x": 0.5, "y": 0.55, "scale": 1.06 },
+          { "t": 1, "x": 0.5, "y": 0.52, "scale": 1.1 }
+        ]
+      },
+      "transitionIn": { "type": "cut", "durationSec": 0 },
+      "reason": "Island centred, worktop clear, no glare on the splashback.",
+      "scoreAtSelection": 0.86
+    },
+    {
+      "id": "c04",
+      "sourceId": "s_2d0f8b31",
+      "src": "raw/07_dining.mp4",
+      "inSec": 5.2,
+      "outSec": 9.2,
+      "speed": 1,
+      "volumeDb": -60,
+      "room": "dining",
+      "transform": {
+        "mode": "cover",
+        "focus": "saliency",
+        "path": [
+          { "t": 0, "x": 0.46, "y": 0.5, "scale": 1.05 },
+          { "t": 1, "x": 0.5, "y": 0.49, "scale": 1.09 }
+        ]
+      },
+      "transitionIn": { "type": "dissolve", "durationSec": 0.4 },
+      "reason": "Shows the room's full depth; connects kitchen to garden view.",
+      "scoreAtSelection": 0.81
+    },
+    {
+      "id": "c05",
+      "sourceId": "s_6a3c4d12",
+      "src": "raw/09_primary_bedroom.mp4",
+      "inSec": 3.0,
+      "outSec": 6.5,
+      "speed": 1,
+      "volumeDb": -60,
+      "room": "bedroom",
+      "transform": {
+        "mode": "cover",
+        "focus": "saliency",
+        "path": [
+          { "t": 0, "x": 0.54, "y": 0.5, "scale": 1.1 },
+          { "t": 1, "x": 0.5, "y": 0.5, "scale": 1.14 }
+        ]
+      },
+      "transitionIn": { "type": "cut", "durationSec": 0 },
+      "reason": "Brightest bedroom shot; bed made, curtains open.",
+      "scoreAtSelection": 0.84
+    },
+    {
+      "id": "c06",
+      "sourceId": "s_9e5b7710",
+      "src": "raw/11_bathroom.mp4",
+      "inSec": 0.9,
+      "outSec": 3.9,
+      "speed": 1,
+      "volumeDb": -60,
+      "room": "bathroom",
+      "transform": {
+        "mode": "cover",
+        "focus": "center",
+        "path": [
+          { "t": 0, "x": 0.5, "y": 0.5, "scale": 1.04 },
+          { "t": 1, "x": 0.5, "y": 0.5, "scale": 1.07 }
+        ]
+      },
+      "transitionIn": { "type": "cut", "durationSec": 0 },
+      "reason": "Clean wide angle, mirror edge out of frame, no lens dust.",
+      "scoreAtSelection": 0.79
+    },
+    {
+      "id": "c07",
+      "sourceId": "s_1f8d3c5a",
+      "src": "raw/14_balcony.mp4",
+      "inSec": 4.4,
+      "outSec": 7.9,
+      "speed": 1,
+      "volumeDb": -12,
+      "room": "balcony",
+      "transform": {
+        "mode": "cover",
+        "focus": "saliency",
+        "path": [
+          { "t": 0, "x": 0.45, "y": 0.52, "scale": 1.08 },
+          { "t": 1, "x": 0.5, "y": 0.5, "scale": 1.12 }
+        ]
+      },
+      "transitionIn": { "type": "cut", "durationSec": 0 },
+      "reason": "Balcony depth plus skyline; natural sound kept very low under music.",
+      "scoreAtSelection": 0.9
+    },
+    {
+      "id": "c08",
+      "sourceId": "s_b3a6e28f",
+      "src": "raw/16_view_drone.mp4",
+      "inSec": 18.2,
+      "outSec": 21.7,
+      "speed": 1,
+      "volumeDb": -60,
+      "room": "view",
+      "transform": {
+        "mode": "cover",
+        "focus": "saliency",
+        "path": [
+          { "t": 0, "x": 0.5, "y": 0.42, "scale": 1.0 },
+          { "t": 1, "x": 0.5, "y": 0.44, "scale": 1.04 }
+        ]
+      },
+      "transitionIn": { "type": "cut", "durationSec": 0 },
+      "reason": "Slow aerial reveal of the park; the emotional peak of the cut.",
+      "scoreAtSelection": 0.95
+    },
+    {
+      "id": "c09",
+      "sourceId": "s_4f2a1b9c",
+      "src": "raw/01_exterior_front.mp4",
+      "inSec": 21.0,
+      "outSec": 23.5,
+      "speed": 1,
+      "volumeDb": -6,
+      "room": "exterior",
+      "transform": {
+        "mode": "cover",
+        "focus": "center",
+        "path": [
+          { "t": 0, "x": 0.5, "y": 0.5, "scale": 1.0 },
+          { "t": 1, "x": 0.5, "y": 0.5, "scale": 1.02 }
+        ]
+      },
+      "transitionIn": { "type": "dissolve", "durationSec": 0.5 },
+      "reason": "Returns to the facade for the end card; different framing from the hook.",
+      "scoreAtSelection": 0.77
+    }
+  ],
+  "overlays": [
+    {
+      "id": "o01",
+      "kind": "address",
+      "text": "14 Oak Avenue",
+      "subtext": "Richmond, TW9",
+      "inSec": 0.4,
+      "outSec": 4.4,
+      "anchor": "bottom_left",
+      "style": "address_tag",
+      "maxWidthPct": 72,
+      "opacity": 1,
+      "animation": "rise"
+    },
+    {
+      "id": "o02",
+      "kind": "room_label",
+      "text": "Kitchen",
+      "inSec": 7.0,
+      "outSec": 9.6,
+      "anchor": "bottom_left",
+      "style": "caption",
+      "maxWidthPct": 60,
+      "opacity": 0.92,
+      "animation": "fade"
+    },
+    {
+      "id": "o03",
+      "kind": "price",
+      "text": "£845,000",
+      "subtext": "3 bed · 2 bath · 1,240 sq ft",
+      "inSec": 24.8,
+      "outSec": 30.0,
+      "anchor": "bottom_center",
+      "style": "price_lower",
+      "maxWidthPct": 84,
+      "opacity": 1,
+      "animation": "count_up"
+    },
+    {
+      "id": "o04",
+      "kind": "logo",
+      "text": "Whitfield & Co",
+      "inSec": 24.8,
+      "outSec": 30.0,
+      "anchor": "top_left",
+      "style": "logo_corner",
+      "maxWidthPct": 34,
+      "opacity": 0.9,
+      "animation": "fade"
+    },
+    {
+      "id": "o05",
+      "kind": "disclaimer",
+      "text": "Guide price. Measurements approximate.",
+      "inSec": 26.0,
+      "outSec": 30.0,
+      "anchor": "bottom_center",
+      "style": "small_print",
+      "maxWidthPct": 70,
+      "opacity": 0.55,
+      "animation": "none"
+    }
+  ],
+  "audio": {
+    "music": {
+      "trackId": "calm_04_quiet_morning",
+      "src": "music/calm/quiet_morning.m4a",
+      "gainDb": -3.5,
+      "duckUnderVoiceDb": -18,
+      "beatGrid": [
+        0.625, 1.25, 1.875, 2.5, 3.125, 3.75, 4.375, 5.0, 5.625, 6.25,
+        6.875, 7.5, 8.125, 8.75, 9.375, 10.0, 10.625, 11.25, 11.875, 12.5,
+        13.125, 13.75, 14.375, 15.0, 15.625, 16.25, 16.875, 17.5, 18.125, 18.75,
+        19.375, 20.0, 20.625, 21.25, 21.875, 22.5, 23.125, 23.75, 24.375, 25.0,
+        25.625, 26.25, 26.875, 27.5, 28.125, 28.75, 29.375, 30.0
+      ],
+      "license": {
+        "source": "ai_generated",
+        "licenseId": "lyria-2026-11-bank-04",
+        "attribution": "Generated with Lyria. Cleared for commercial use under provider terms."
+      }
+    },
+    "voice": {
+      "mode": "clean",
+      "src": "raw/vo_sara_take2.m4a",
+      "enhance": { "denoise": true, "dereverb": true, "isolate": false, "deess": true }
+    },
+    "mix": { "lufs": -14, "truePeakDbtp": -1.5 }
+  },
+  "captions": {
+    "mode": "both",
+    "style": "clean_lower",
+    "language": "en",
+    "words": [
+      { "text": "This", "startSec": 0.6, "endSec": 0.82 },
+      { "text": "is", "startSec": 0.82, "endSec": 0.94 },
+      { "text": "14", "startSec": 0.94, "endSec": 1.2 },
+      { "text": "Oak", "startSec": 1.2, "endSec": 1.48 },
+      { "text": "Avenue.", "startSec": 1.48, "endSec": 2.1 }
+    ]
+  },
+  "review": {
+    "score": 0.86,
+    "reviewedBy": "google/gemini-4-carbon",
+    "checks": [
+      { "id": "duration", "passed": true, "detail": "29.900s including dissolves, within 29.5-30.5s." },
+      { "id": "no_black_frames", "passed": true, "detail": "No frame below 2% mean luma." },
+      { "id": "no_freeze", "passed": true, "detail": "Longest static run 0.18s." },
+      { "id": "text_safe_area", "passed": true, "detail": "All overlays inside 60/120/250/340 margins." },
+      { "id": "cta_legible", "passed": true, "detail": "Price card contrast 7.4:1 against end frame." },
+      { "id": "room_order", "passed": true, "detail": "Approach, public rooms, private rooms, view, return." },
+      { "id": "loudness", "passed": true, "detail": "-14.1 LUFS integrated, true peak -1.6 dBTP." },
+      { "id": "no_repeated_shot", "passed": true, "detail": "Facade reused at a different timecode for the end card." },
+      { "id": "hook_visible", "passed": true, "detail": "Subject sharp and centred from frame 0." },
+      { "id": "facts_present", "passed": true, "detail": "Price, beds, baths and address confirmed by the user." }
+    ]
+  },
+  "provenance": {
+    "pipelineVersion": "0.1.0",
+    "sourceIndexHash": "sha256:9f2c7ab41e0d5c88b3f6a1d2e4c7098b5a3f1e6d2c8b4a7f0e9d1c3b5a7f2e4d",
+    "models": {
+      "tagging": "google/gemini-3.8-flash",
+      "planning": "openai/gpt-6-astra",
+      "review": "google/gemini-4-carbon",
+      "tts": "openai/gpt-audio"
+    },
+    "promptVersions": {
+      "tagging": "tag-2026-11-01",
+      "planning": "plan-2026-11-01"
+    },
+    "costUsd": 0.2841,
+    "renderCacheHits": 3
+  }
+}

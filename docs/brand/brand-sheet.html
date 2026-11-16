@@ -1,0 +1,165 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<title>Zeniconic — brand sheet</title>
+<link rel="stylesheet" href="../design/tokens.css">
+<style>
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--paper); color: var(--ink); font-family: var(--font-ui); }
+  .sheet { max-width: 1180px; margin: 0 auto; padding: 64px 40px 96px; }
+  .kicker { font-size: 10px; letter-spacing: .14em; text-transform: uppercase; color: var(--ink-45); font-weight: 600; }
+  .rule { height: 1px; background: var(--hairline); margin: 40px 0; border: 0; }
+  h1, h2 { font-family: var(--font-display); letter-spacing: -0.035em; margin: 0; }
+  h1 { font-size: 44px; line-height: 1; }
+  h2 { font-size: 22px; margin-bottom: 18px; }
+  p { margin: 0; color: var(--ink-70); font-size: 14px; line-height: 1.55; max-width: 62ch; }
+
+  .hero { display: flex; align-items: center; gap: 40px; margin: 32px 0 8px; }
+  .hero .mark { width: 96px; height: 96px; color: var(--ink); flex: none; }
+  .lockup { display: flex; flex-direction: column; gap: 10px; }
+  .wordmark { font-family: var(--font-display); font-weight: 650; font-size: 68px; letter-spacing: -0.045em; line-height: .95; }
+  .tagline { font-size: 15px; color: var(--ink-70); letter-spacing: .01em; }
+
+  .on-ink { background: #14120F; color: #F3EEE3; border-radius: 14px; padding: 48px; display: flex; align-items: center; gap: 40px; }
+  .on-ink .mark { width: 88px; height: 88px; color: #F3EEE3; flex: none; }
+  .on-ink .wordmark { color: #F3EEE3; font-size: 60px; }
+  .on-ink .tagline { color: #C6BEB0; }
+
+  .grid3 { display: grid; grid-template-columns: 1.1fr 1fr; gap: 56px; align-items: start; }
+  .scales { display: flex; align-items: end; gap: 32px; }
+  .scale { text-align: center; color: var(--ink); }
+  .scale svg { display: block; color: var(--ink); }
+  .scale span { display: block; font-size: 10px; color: var(--ink-45); margin-top: 10px; letter-spacing: .08em; }
+
+  .clear { position: relative; width: 240px; height: 240px; border: 1px dashed var(--hairline-strong); display: grid; place-items: center; }
+  .clear .inner { width: 120px; height: 120px; border: 1px dashed var(--brass); display: grid; place-items: center; }
+  .clear svg { width: 88px; height: 88px; color: var(--ink); }
+  .clear .note { position: absolute; bottom: -26px; left: 0; font-size: 10px; color: var(--ink-45); }
+
+  .swatches { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; }
+  .sw { border: 1px solid var(--hairline); border-radius: 10px; overflow: hidden; }
+  .sw .swatch-chip { height: 76px; }
+  .sw .meta { padding: 10px 12px; background: var(--paper-raised); }
+  .sw b { display: block; font-size: 13px; }
+  .sw span { font-size: 11px; color: var(--ink-45); font-family: var(--font-mono); }
+
+  .type { display: grid; grid-template-columns: 1fr 1fr; gap: 40px; }
+  .spec { border-top: 1px solid var(--hairline); padding-top: 14px; }
+  .spec .big { font-family: var(--font-display); font-weight: 650; font-size: 46px; letter-spacing: -0.04em; line-height: 1; }
+  .spec .ui { font-size: 26px; letter-spacing: -0.02em; }
+  .spec .meta { margin-top: 12px; font-size: 11px; color: var(--ink-45); }
+
+  .misuse { display: grid; grid-template-columns: repeat(3, 1fr); gap: 16px; }
+  .bad { border: 1px solid var(--hairline); border-radius: 10px; padding: 22px; background: var(--paper-raised); }
+  .bad .demo { height: 74px; display: grid; place-items: center; }
+  .bad .why { font-size: 11px; color: var(--clay); margin-top: 8px; }
+  .bad .why b { color: var(--danger-text); }
+  .stretch { transform: scaleX(1.7); }
+  .shadow { filter: drop-shadow(0 8px 14px rgba(0,0,0,.45)); }
+  .rotate { transform: rotate(-18deg); }
+  .recolor { color: #2E6BFF !important; }
+  .outline svg path, .outline svg rect { fill: none !important; stroke: var(--brass); stroke-width: 1.4; }
+
+  .footer { display: flex; justify-content: space-between; font-size: 11px; color: var(--ink-45); margin-top: 56px; }
+</style>
+</head>
+<body>
+<main class="sheet">
+  <div class="kicker">Brand sheet · November 2026</div>
+
+  <div class="hero">
+    <svg class="mark" viewBox="0 0 64 64" aria-label="Zeniconic mark"><path fill="currentColor" fill-rule="evenodd" d="M10 10h44v13L24 44h30v13H10V44l30-21H10z"/><path fill="#B08A4A" d="M24 20v24l26-12z"/></svg>
+    <div class="lockup">
+      <div class="wordmark">Zeniconic</div>
+      <div class="tagline">Listings, made iconic.</div>
+    </div>
+  </div>
+
+  <hr class="rule">
+
+  <div class="grid3">
+    <div>
+      <h2>What the mark is</h2>
+      <p>A bold Z with a brass play triangle set into its diagonal. The letter is the name; the triangle is what the product makes. The Z stays legible at 16 px, where the triangle resolves into a notch, and the brass accent carries the brand at every size.</p>
+      <p style="margin-top:14px">The name is hers — Zeni — and the promise is the output: an ordinary walkthrough becomes something worth watching.</p>
+    </div>
+    <div>
+      <div class="scales">
+        <div class="scale"><svg width="64" height="64" viewBox="0 0 64 64"><path fill="currentColor" fill-rule="evenodd" d="M10 10h44v13L24 44h30v13H10V44l30-21H10z"/><path fill="#B08A4A" d="M24 20v24l26-12z"/></svg><span>64</span></div>
+        <div class="scale"><svg width="48" height="48" viewBox="0 0 64 64"><path fill="currentColor" fill-rule="evenodd" d="M10 10h44v13L24 44h30v13H10V44l30-21H10z"/><path fill="#B08A4A" d="M24 20v24l26-12z"/></svg><span>48</span></div>
+        <div class="scale"><svg width="32" height="32" viewBox="0 0 64 64"><path fill="currentColor" fill-rule="evenodd" d="M10 10h44v13L24 44h30v13H10V44l30-21H10z"/><path fill="#B08A4A" d="M24 20v24l26-12z"/></svg><span>32</span></div>
+        <div class="scale"><svg width="24" height="24" viewBox="0 0 64 64"><path fill="currentColor" fill-rule="evenodd" d="M10 10h44v13L24 44h30v13H10V44l30-21H10z"/><path fill="#B08A4A" d="M24 20v24l26-12z"/></svg><span>24</span></div>
+        <div class="scale"><svg width="16" height="16" viewBox="0 0 64 64"><path fill="currentColor" fill-rule="evenodd" d="M10 10h44v13L24 44h30v13H10V44l30-21H10z"/><path fill="#B08A4A" d="M24 20v24l26-12z"/></svg><span>16</span></div>
+      </div>
+      <p style="margin-top:18px;font-size:12px">Below 20 px the triangle resolves into a notch. That is acceptable: the Z still reads at favicon size.</p>
+    </div>
+  </div>
+
+  <hr class="rule">
+
+  <div class="on-ink">
+    <svg class="mark" viewBox="0 0 64 64" aria-hidden="true"><path fill="currentColor" fill-rule="evenodd" d="M10 10h44v13L24 44h30v13H10V44l30-21H10z"/><path fill="#B08A4A" d="M24 20v24l26-12z"/></svg>
+    <div class="lockup">
+      <div class="wordmark">Zeniconic</div>
+      <div class="tagline">Listings, made iconic.</div>
+    </div>
+  </div>
+
+  <hr class="rule">
+
+  <h2>Clear space</h2>
+  <div style="display:flex;gap:56px;align-items:start;flex-wrap:wrap">
+    <div class="clear">
+      <div class="inner">
+        <svg viewBox="0 0 64 64"><path fill="currentColor" fill-rule="evenodd" d="M10 10h44v13L24 44h30v13H10V44l30-21H10z"/><path fill="#B08A4A" d="M24 20v24l26-12z"/></svg>
+      </div>
+      <span class="note">x = one quarter of the Z's cap height</span>
+    </div>
+    <p style="max-width:44ch">Keep at least <b>x</b> clear on every side of the lockup, where x is a quarter of the Z's cap height. Nothing sits inside that box: no tagline, no border, no crop. Measure from the outermost pixel of the Z, not from the triangle.</p>
+  </div>
+
+  <hr class="rule">
+
+  <h2>Colour</h2>
+  <div class="swatches">
+    <div class="sw"><div class="swatch-chip" style="background:#B08A4A"></div><div class="meta"><b>Brass</b><span>#B08A4A</span></div></div>
+    <div class="sw"><div class="swatch-chip" style="background:#14120F"></div><div class="meta"><b>Ink</b><span>#14120F</span></div></div>
+    <div class="sw"><div class="swatch-chip" style="background:#F7F4EF"></div><div class="meta"><b>Paper</b><span>#F7F4EF</span></div></div>
+    <div class="sw"><div class="swatch-chip" style="background:#7A5A24"></div><div class="meta"><b>Brass text</b><span>#7A5A24</span></div></div>
+  </div>
+  <p style="margin-top:14px;font-size:12px">The mark uses brass on paper and brass on ink. At sizes below 24 px use <b>brass text</b> (#7A5A24) on light surfaces for contrast. No other colours are permitted.</p>
+
+  <hr class="rule">
+
+  <h2>Type</h2>
+  <div class="type">
+    <div class="spec">
+      <div class="big">Bricolage</div>
+      <div class="meta">Bricolage Grotesque · 650 · display, prices, wordmark</div>
+    </div>
+    <div class="spec">
+      <div class="ui">Archivo — interface, labels, captions</div>
+      <div class="meta">Archivo · 400–600 · 15 px UI base, 10 px caps at 0.12 em</div>
+    </div>
+  </div>
+
+  <hr class="rule">
+
+  <h2>Misuse</h2>
+  <div class="misuse">
+    <div class="bad"><div class="demo"><svg width="44" height="44" viewBox="0 0 64 64" class="stretch" style="color:var(--ink)"><path fill="currentColor" fill-rule="evenodd" d="M10 10h44v13L24 44h30v13H10V44l30-21H10z"/><path fill="#B08A4A" d="M24 20v24l26-12z"/></svg></div><div class="why"><b>Don't stretch.</b> Scale proportionally, always.</div></div>
+    <div class="bad"><div class="demo"><svg width="44" height="44" viewBox="0 0 64 64" class="shadow" style="color:var(--ink)"><path fill="currentColor" fill-rule="evenodd" d="M10 10h44v13L24 44h30v13H10V44l30-21H10z"/><path fill="#B08A4A" d="M24 20v24l26-12z"/></svg></div><div class="why"><b>Don't add effects.</b> No shadow, bevel or glow.</div></div>
+    <div class="bad"><div class="demo"><svg width="44" height="44" viewBox="0 0 64 64" class="rotate" style="color:var(--ink)"><path fill="currentColor" fill-rule="evenodd" d="M10 10h44v13L24 44h30v13H10V44l30-21H10z"/><path fill="#B08A4A" d="M24 20v24l26-12z"/></svg></div><div class="why"><b>Don't rotate.</b> The Z sits level.</div></div>
+    <div class="bad"><div class="demo"><svg width="44" height="44" viewBox="0 0 64 64" class="recolor"><path fill="currentColor" fill-rule="evenodd" d="M10 10h44v13L24 44h30v13H10V44l30-21H10z"/><path fill="#B08A4A" d="M24 20v24l26-12z"/></svg></div><div class="why"><b>Don't recolour.</b> Brass, ink or paper only.</div></div>
+    <div class="bad"><div class="demo"><svg width="44" height="44" viewBox="0 0 64 64" class="outline"><path fill="currentColor" fill-rule="evenodd" d="M10 10h44v13L24 44h30v13H10V44l30-21H10z"/><path fill="#B08A4A" d="M24 20v24l26-12z"/></svg></div><div class="why"><b>Don't outline.</b> It is a solid shape, not a line icon.</div></div>
+    <div class="bad"><div class="demo" style="background:linear-gradient(135deg,#8c7350,#3b3126);border-radius:6px"><svg width="44" height="44" viewBox="0 0 64 64" style="color:#F3EEE3"><path fill="currentColor" fill-rule="evenodd" d="M10 10h44v13L24 44h30v13H10V44l30-21H10z"/><path fill="#B08A4A" d="M24 20v24l26-12z"/></svg></div><div class="why"><b>Don't sit on busy footage</b> without a scrim.</div></div>
+  </div>
+
+  <div class="footer">
+    <span>Zeniconic · brand sheet v1</span>
+    <span>Mark: 64 × 64 viewBox · Z in currentColor, triangle in brass</span>
+  </div>
+</main>
+</body>
+</html>

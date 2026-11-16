@@ -1,0 +1,29 @@
+{
+  "model": "google/gemini-3-pro-image",
+  "prompt": "Flat vector logo mark for a premium real-estate video brand. A solid brass architectural doorway: a tall rounded arch with a triangular play-button shape cut out of its centre as negative space, plus a thin threshold line beneath it. Single brass colour (#B08A4A) on warm off-white (#F7F4EF). Geometric, architectural, editorial, luxury. No gradient, no shadow, no texture, no perspective, no 3D. Perfectly centred with generous margins. Absolutely NO TEXT, no words, no letters, no watermark, no mockup, no business card. Square 1:1.",
+  "usage": {
+    "prompt_tokens": 127,
+    "completion_tokens": 1403,
+    "total_tokens": 1530,
+    "cost": 0.13805,
+    "is_byok": false,
+    "prompt_tokens_details": {
+      "cached_tokens": 0,
+      "cache_write_tokens": 0,
+      "audio_tokens": 0,
+      "video_tokens": 0
+    },
+    "cost_details": {
+      "upstream_inference_cost": 0.13805,
+      "upstream_inference_prompt_cost": 0.000254,
+      "upstream_inference_completions_cost": 0.137796
+    },
+    "completion_tokens_details": {
+      "reasoning_tokens": 283,
+      "image_tokens": 1120,
+      "audio_tokens": 0
+    }
+  },
+  "text": null,
+  "file": "D:\\video\\docs\\brand\\concepts\\a-doorway.png"
+}

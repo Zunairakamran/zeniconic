@@ -1,0 +1,36 @@
+{
+  "version": 1,
+  "id": "walkthrough",
+  "label": "Walkthrough",
+  "pacing": {
+    "minShotSec": 3.0,
+    "maxShotSec": 5.0,
+    "targetAvgShotSec": 3.8
+  },
+  "transitions": {
+    "in": "slide",
+    "out": "slide",
+    "durationSec": 0.55,
+    "everyNthCut": 1
+  },
+  "overlays": {
+    "price": "price_lower",
+    "address": "address_tag",
+    "roomLabel": "address_tag",
+    "introAnimation": "slide_in",
+    "outroAnimation": "fade"
+  },
+  "captions": {
+    "mode": "burn",
+    "style": "clean_lower"
+  },
+  "music": {
+    "mood": "steady",
+    "energy": 3
+  },
+  "color": {
+    "saturation": 1.04,
+    "contrast": 1.03,
+    "warmth": 0.03
+  }
+}

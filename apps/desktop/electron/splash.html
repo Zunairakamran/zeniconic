@@ -1,0 +1,40 @@
+<!doctype html>
+<html lang="en-GB">
+<head>
+<meta charset="utf-8">
+<title>Zeniconic</title>
+<style>
+  html, body { margin: 0; height: 100%; background: #14120F; overflow: hidden; }
+  .stage { position: relative; width: 100vw; height: 100vh; }
+  video { width: 100%; height: 100%; object-fit: cover; display: block; }
+  .veil {
+    position: absolute; inset: 0;
+    background: #14120F; opacity: 1;
+    animation: veil 700ms cubic-bezier(.22,1,.36,1) 0ms forwards;
+    pointer-events: none;
+  }
+  @keyframes veil { to { opacity: 0; } }
+  .exit {
+    position: absolute; inset: 0; background: #14120F; opacity: 0;
+    animation: exit 260ms ease-out 1550ms forwards; pointer-events: none;
+  }
+  @keyframes exit { to { opacity: 1; } }
+  @media (prefers-reduced-motion: reduce) {
+    .veil, .exit { animation-duration: 1ms !important; }
+  }
+</style>
+</head>
+<body>
+  <div class="stage">
+    <video src="assets/intro.mp4" autoplay muted playsinline preload="auto"></video>
+    <div class="veil"></div>
+    <div class="exit"></div>
+  </div>
+  <script>
+    // If the video cannot play, the paper shell alone is acceptable; the window
+    // closes on its own after the same interval.
+    const video = document.querySelector('video');
+    video.addEventListener('error', () => { document.body.style.background = '#F7F4EF'; });
+  </script>
+</body>
+</html>

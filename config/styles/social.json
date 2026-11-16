@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "id": "social",
+  "label": "Social",
+  "pacing": {
+    "minShotSec": 1.2,
+    "maxShotSec": 2.2,
+    "targetAvgShotSec": 1.7
+  },
+  "transitions": {
+    "in": "whip",
+    "out": "whip",
+    "durationSec": 0.22,
+    "everyNthCut": 2
+  },
+  "overlays": {
+    "price": "price_lower",
+    "address": "address_tag",
+    "introAnimation": "slide_in",
+    "outroAnimation": "fade"
+  },
+  "captions": {
+    "mode": "burn",
+    "style": "bold_center"
+  },
+  "music": {
+    "mood": "energetic",
+    "energy": 5
+  },
+  "color": {
+    "saturation": 1.18,
+    "contrast": 1.12,
+    "warmth": 0.02
+  }
+}

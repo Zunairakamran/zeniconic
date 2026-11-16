@@ -1,0 +1,477 @@
+/* Screen 04 — Shot review. Every selector is scoped to .shotreview. */
+
+.shotreview {
+  --sr-media-fg: var(--paper-raised);
+  --sr-chip-bg: color-mix(in srgb, var(--paper-raised) 92%, transparent);
+  display: flex;
+  flex-direction: column;
+  height: calc(100vh - 114px);
+  min-height: 560px;
+}
+
+.shotreview__scroller {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 2px;
+}
+
+:root[data-theme='dark'] .shotreview {
+  --sr-media-fg: var(--ink);
+  --sr-chip-bg: color-mix(in srgb, var(--stage) 78%, transparent);
+}
+
+.shotreview__head {
+  flex: none;
+  display: flex;
+  align-items: flex-end;
+  justify-content: space-between;
+  gap: var(--s-6);
+  padding-bottom: var(--s-5);
+}
+
+.shotreview__title {
+  margin-top: var(--s-2);
+}
+
+.shotreview__sub {
+  margin-top: 6px;
+  font-size: var(--text-sm);
+  max-width: 62ch;
+}
+
+.shotreview__headnote {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  padding-bottom: 4px;
+  font-size: var(--text-xs);
+  color: var(--ink-70);
+  white-space: nowrap;
+}
+
+.shotreview__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--clay);
+}
+
+.shotreview__filters {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+  flex-wrap: wrap;
+  padding: var(--s-3) 0 var(--s-3);
+  border-top: var(--border);
+  border-bottom: var(--border);
+}
+
+.shotreview__count {
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  color: var(--ink-45);
+}
+
+.shotreview__filters .chip--on .shotreview__count {
+  color: var(--brass-text);
+}
+
+.shotreview__filterhint {
+  margin-left: auto;
+  font-size: var(--text-xs);
+  color: var(--ink-45);
+}
+
+.shotreview__grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: var(--s-4);
+  margin-top: var(--s-4);
+  padding-bottom: var(--s-4);
+}
+
+.shotreview__tile {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: var(--border);
+  border-radius: var(--r-md);
+  background: var(--paper-raised);
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+  transition: border-color var(--dur-fast) var(--ease-out), box-shadow var(--dur-base) var(--ease-out);
+}
+
+.shotreview__tile:hover {
+  border-color: var(--hairline-strong);
+  box-shadow: var(--shadow-md);
+}
+
+.shotreview__tile.is-rejected {
+  background: color-mix(in srgb, var(--clay-wash) 26%, var(--paper-raised));
+}
+
+/* ── Fake photography ─────────────────────────────────────────────── */
+
+.shotreview__photo {
+  --sr-wall-a: color-mix(in srgb, var(--brass) 22%, var(--paper-deep));
+  --sr-wall-b: color-mix(in srgb, var(--sage) 26%, var(--paper-deep));
+  --sr-light: color-mix(in srgb, var(--paper-raised) 90%, var(--brass-wash));
+  --sr-win-x: 62%;
+  --sr-win-y: 15%;
+  --sr-win-w: 26%;
+  --sr-win-h: 42%;
+  position: relative;
+  aspect-ratio: 3 / 2;
+  overflow: hidden;
+  isolation: isolate;
+  background-color: var(--sr-wall-a);
+  background-image:
+    radial-gradient(72% 58% at 70% 14%, color-mix(in srgb, var(--sr-light) 42%, transparent), transparent 72%),
+    linear-gradient(168deg, var(--sr-wall-a) 0%, var(--sr-wall-b) 100%);
+}
+
+.shotreview__photo::before {
+  content: '';
+  position: absolute;
+  left: var(--sr-win-x);
+  top: var(--sr-win-y);
+  width: var(--sr-win-w);
+  height: var(--sr-win-h);
+  z-index: 1;
+  border: 1px solid color-mix(in srgb, var(--stage) 14%, transparent);
+  background-image:
+    linear-gradient(90deg, transparent 47%, color-mix(in srgb, var(--stage) 30%, transparent) 47% 53%, transparent 53%),
+    linear-gradient(180deg, transparent 46%, color-mix(in srgb, var(--stage) 22%, transparent) 46% 51%, transparent 51%),
+    linear-gradient(178deg, color-mix(in srgb, var(--sr-light) 96%, transparent), color-mix(in srgb, var(--brass-wash) 50%, var(--paper-raised)));
+  box-shadow: 0 0 26px 8px color-mix(in srgb, var(--sr-light) 20%, transparent);
+}
+
+.shotreview__photo::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  pointer-events: none;
+  box-shadow:
+    inset 0 0 0 1px color-mix(in srgb, var(--stage) 10%, transparent),
+    inset 0 -30px 34px -22px color-mix(in srgb, var(--stage) 52%, transparent);
+}
+
+.shotreview__photo[data-room='kitchen'] {
+  --sr-wall-a: color-mix(in srgb, var(--brass) 30%, var(--paper-raised));
+  --sr-wall-b: color-mix(in srgb, var(--brass-dark) 34%, var(--paper-deep));
+  --sr-light: color-mix(in srgb, var(--paper-raised) 86%, var(--amber-wash));
+  --sr-win-x: 58%;
+  --sr-win-y: 9%;
+  --sr-win-w: 29%;
+  --sr-win-h: 44%;
+}
+
+.shotreview__photo[data-room='living'] {
+  --sr-wall-a: color-mix(in srgb, var(--sage) 24%, var(--paper-raised));
+  --sr-wall-b: color-mix(in srgb, var(--sage) 48%, var(--paper-deep));
+  --sr-win-x: 34%;
+  --sr-win-w: 36%;
+  --sr-win-y: 12%;
+}
+
+.shotreview__photo[data-room='bedroom'] {
+  --sr-wall-a: color-mix(in srgb, var(--clay) 14%, var(--paper-raised));
+  --sr-wall-b: color-mix(in srgb, var(--brass) 26%, var(--paper-deep));
+  --sr-win-x: 66%;
+  --sr-win-w: 21%;
+}
+
+.shotreview__photo[data-room='bathroom'] {
+  --sr-wall-a: color-mix(in srgb, var(--sage) 12%, var(--paper-raised));
+  --sr-wall-b: color-mix(in srgb, var(--ink) 18%, var(--paper-deep));
+  --sr-win-x: 70%;
+  --sr-win-y: 10%;
+  --sr-win-w: 17%;
+  --sr-win-h: 34%;
+}
+
+.shotreview__photo[data-room='entry'] {
+  --sr-wall-a: color-mix(in srgb, var(--brass-dark) 24%, var(--paper-deep));
+  --sr-wall-b: color-mix(in srgb, var(--ink) 44%, var(--paper-deep));
+  --sr-win-x: 42%;
+  --sr-win-y: 22%;
+  --sr-win-w: 18%;
+  --sr-win-h: 58%;
+}
+
+.shotreview__photo[data-room='balcony'] {
+  background-image: linear-gradient(
+    180deg,
+    color-mix(in srgb, var(--paper) 58%, var(--brass-wash)) 0%,
+    color-mix(in srgb, var(--brass) 20%, var(--paper)) 46%,
+    color-mix(in srgb, var(--sage) 38%, var(--paper-deep)) 58%,
+    color-mix(in srgb, var(--sage) 54%, var(--stage)) 100%
+  );
+}
+
+.shotreview__photo[data-room='balcony']::before {
+  left: 0;
+  top: 54%;
+  width: 100%;
+  height: 26%;
+  border: 0;
+  border-top: 2px solid color-mix(in srgb, var(--stage) 38%, transparent);
+  background-image: repeating-linear-gradient(
+    90deg,
+    color-mix(in srgb, var(--stage) 42%, transparent) 0 2px,
+    transparent 2px 13px
+  );
+  box-shadow: none;
+  opacity: 0.6;
+}
+
+.shotreview__photo[data-room='view'] {
+  background-image:
+    repeating-linear-gradient(90deg, color-mix(in srgb, var(--stage) 30%, transparent) 0 9px, transparent 9px 17px),
+    linear-gradient(
+      180deg,
+      color-mix(in srgb, var(--paper) 55%, var(--brass-wash)) 0%,
+      color-mix(in srgb, var(--brass) 22%, var(--paper)) 54%,
+      color-mix(in srgb, var(--stage) 55%, var(--paper-deep)) 100%
+    );
+  background-size: 100% 24%, 100% 100%;
+  background-position: 0 82%, 0 0;
+  background-repeat: no-repeat;
+}
+
+.shotreview__photo[data-room='view']::before {
+  display: none;
+}
+
+.shotreview__photo[data-room='exterior'] {
+  --sr-light: color-mix(in srgb, var(--paper-raised) 92%, var(--brass-wash));
+  background-image:
+    linear-gradient(180deg, transparent 0 60%, color-mix(in srgb, var(--sage) 42%, var(--stage)) 60% 100%),
+    linear-gradient(
+      172deg,
+      color-mix(in srgb, var(--paper) 72%, var(--brass-wash)) 0%,
+      color-mix(in srgb, var(--brass) 16%, var(--paper)) 46%,
+      color-mix(in srgb, var(--paper-deep) 88%, var(--sage)) 100%
+    );
+}
+
+.shotreview__photo[data-room='exterior']::before {
+  left: 15%;
+  top: 26%;
+  width: 48%;
+  height: 40%;
+  border: 0;
+  border-radius: 2px 2px 0 0;
+  background-image:
+    linear-gradient(90deg, transparent 20%, color-mix(in srgb, var(--stage) 40%, transparent) 20% 34%, transparent 34% 62%, color-mix(in srgb, var(--stage) 40%, transparent) 62% 76%, transparent 76%),
+    linear-gradient(180deg, color-mix(in srgb, var(--paper-raised) 92%, var(--brass-wash)), color-mix(in srgb, var(--paper-raised) 70%, var(--brass)));
+  box-shadow: 20px 10px 0 -10px color-mix(in srgb, var(--stage) 22%, transparent);
+}
+
+/* Windows stay warm on a dark shell instead of turning into black panels. */
+:root[data-theme='dark'] .shotreview__photo[data-room='kitchen']::before,
+:root[data-theme='dark'] .shotreview__photo[data-room='living']::before,
+:root[data-theme='dark'] .shotreview__photo[data-room='bedroom']::before,
+:root[data-theme='dark'] .shotreview__photo[data-room='bathroom']::before {
+  background-image:
+    linear-gradient(90deg, transparent 47%, color-mix(in srgb, var(--stage) 46%, transparent) 47% 53%, transparent 53%),
+    linear-gradient(180deg, transparent 46%, color-mix(in srgb, var(--stage) 32%, transparent) 46% 51%, transparent 51%),
+    linear-gradient(178deg, color-mix(in srgb, var(--brass-text) 72%, var(--stage)), color-mix(in srgb, var(--brass-text) 26%, var(--stage)));
+  box-shadow: 0 0 26px 8px color-mix(in srgb, var(--brass-text) 14%, transparent);
+}
+
+:root[data-theme='dark'] .shotreview__photo[data-room='entry']::before {
+  background-image: linear-gradient(180deg, color-mix(in srgb, var(--brass-text) 62%, var(--stage)), color-mix(in srgb, var(--brass-text) 22%, var(--stage)));
+  box-shadow: 0 0 32px 10px color-mix(in srgb, var(--brass-text) 12%, transparent);
+}
+
+.shotreview__tile.is-rejected .shotreview__photo {
+  filter: grayscale(1) contrast(0.92) brightness(0.92);
+}
+
+/* ── Overlays ─────────────────────────────────────────────────────── */
+
+.shotreview__score {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  z-index: 4;
+  height: 19px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 6px;
+  border-radius: 4px;
+  background: var(--sr-chip-bg);
+  color: var(--ink);
+  font-family: var(--font-mono);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  backdrop-filter: blur(3px);
+}
+
+.shotreview__score.is-hi {
+  color: var(--success-text);
+}
+
+.shotreview__score.is-mid {
+  color: var(--brass-text);
+}
+
+.shotreview__rejmark {
+  position: absolute;
+  left: 8px;
+  top: 8px;
+  z-index: 4;
+}
+
+.shotreview__room {
+  position: absolute;
+  left: 8px;
+  bottom: 8px;
+  z-index: 4;
+  height: 17px;
+  display: inline-flex;
+  align-items: center;
+  padding: 0 5px;
+  border-radius: 3px;
+  background: var(--sr-chip-bg);
+  color: var(--ink-70);
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+}
+
+.shotreview__dur {
+  position: absolute;
+  right: 8px;
+  bottom: 8px;
+  z-index: 4;
+  padding: 4px 5px;
+  border-radius: 3px;
+  background: color-mix(in srgb, var(--stage) 74%, transparent);
+  color: var(--sr-media-fg);
+  font-family: var(--font-mono);
+  font-size: 9px;
+  line-height: 1;
+}
+
+.shotreview__swap {
+  position: absolute;
+  top: 6px;
+  right: 6px;
+  z-index: 5;
+  opacity: 0;
+  transition: opacity var(--dur-fast) var(--ease-out);
+}
+
+.shotreview__tile:hover .shotreview__swap,
+.shotreview__tile:focus-within .shotreview__swap {
+  opacity: 1;
+}
+
+.shotreview__swap .btn {
+  background: var(--sr-chip-bg);
+  border-color: transparent;
+  color: var(--ink);
+  backdrop-filter: blur(3px);
+}
+
+.shotreview__swap .btn:hover {
+  background: var(--paper-deep);
+  border-color: var(--hairline-strong);
+}
+
+/* ── Caption block ────────────────────────────────────────────────── */
+
+.shotreview__meta {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 9px 11px 11px;
+}
+
+.shotreview__line {
+  display: flex;
+  align-items: baseline;
+  gap: var(--s-2);
+}
+
+.shotreview__line h3 {
+  font-family: var(--font-display);
+  font-size: var(--text-md);
+  font-weight: 500;
+  letter-spacing: -0.01em;
+  line-height: 1.15;
+}
+
+.shotreview__move {
+  margin-left: auto;
+  font-size: var(--text-2xs);
+  color: var(--ink-45);
+  white-space: nowrap;
+}
+
+.shotreview__why {
+  min-width: 0;
+  font-size: var(--text-xs);
+  line-height: 1.35;
+  color: var(--ink-70);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.shotreview__why.is-rejected {
+  color: var(--danger-text);
+}
+
+.shotreview__empty {
+  margin-top: var(--s-6);
+}
+
+/* ── Sticky decision bar ──────────────────────────────────────────── */
+
+.shotreview__foot {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: var(--s-4);
+  margin-top: var(--s-3);
+  padding: var(--s-3) 0 0;
+  border-top: var(--border);
+}
+
+.shotreview__footinfo {
+  font-size: var(--text-xs);
+  color: var(--ink-70);
+}
+
+.shotreview__footinfo b {
+  color: var(--ink);
+  font-weight: 600;
+}
+
+.shotreview__footspacer {
+  flex: 1;
+}
+
+@media (max-width: 1120px) {
+  .shotreview__grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 860px) {
+  .shotreview__grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .shotreview__filterhint {
+    display: none;
+  }
+}

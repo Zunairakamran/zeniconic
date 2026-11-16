@@ -1,0 +1,130 @@
+{
+  "name": "zeniconic",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "description": "Turn raw property footage into platform-ready marketing videos.",
+  "author": {
+    "name": "Zeniconic"
+  },
+  "license": "UNLICENSED",
+  "scripts": {
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "typecheck": "tsc --noEmit",
+    "check": "npm run typecheck && npm run test",
+    "dev:ui": "vite --config apps/ui/vite.config.ts",
+    "dev:electron": "wait-on http://localhost:5173 && electron apps/desktop/electron/main.cjs",
+    "dev": "npm run build:main && concurrently -k -n ui,app \"npm:dev:ui\" \"npm:dev:electron\"",
+    "build:ui": "vite build --config apps/ui/vite.config.ts",
+    "build:main": "node scripts/build-main.mjs",
+    "build": "npm run build:main && npm run build:ui",
+    "start": "electron apps/desktop/electron/main.cjs",
+    "icon": "node packaging/make-icon.mjs",
+    "dist": "npm run build && electron-builder --win nsis --x64 --publish never",
+    "dist:dir": "npm run build && electron-builder --win --x64 --dir --publish never",
+    "postinstall": "electron-builder install-app-deps"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "concurrently": "^10.0.7",
+    "electron": "^45.3.2",
+    "electron-builder": "^26.18.0",
+    "esbuild": "^0.28.2",
+    "sharp": "^0.34.5",
+    "tsx": "^4.19.2",
+    "typescript": "^5.7.2",
+    "vite": "^8.3.8",
+    "vitest": "^2.1.8",
+    "wait-on": "^9.5.1"
+  },
+  "dependencies": {
+    "@remotion/bundler": "^4.0.543",
+    "@remotion/renderer": "^4.0.543",
+    "ajv": "^8.17.1",
+    "ajv-formats": "^3.0.1",
+    "electron-updater": "^6.8.11",
+    "ffmpeg-static": "^5.2.0",
+    "ffprobe-static": "^3.1.0",
+    "kokoro-js": "^1.2.1",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "remotion": "^4.0.543"
+  },
+  "build": {
+    "appId": "com.zeniconic.app",
+    "productName": "Zeniconic",
+    "copyright": "Copyright © 2026 Zeniconic",
+    "directories": {
+      "output": "release",
+      "buildResources": "build"
+    },
+    "extraMetadata": {
+      "main": "dist/main/main.cjs"
+    },
+    "asar": true,
+    "asarUnpack": [
+      "**/node_modules/ffmpeg-static/**",
+      "**/node_modules/ffprobe-static/**",
+      "apps/desktop/electron/assets/**"
+    ],
+    "npmRebuild": false,
+    "extraResources": [
+      {
+        "from": "data/assets/music/catchy-120.m4a",
+        "to": "assets/music/catchy-120.m4a"
+      }
+    ],
+    "files": [
+      "dist/**/*",
+      "apps/desktop/electron/**/*",
+      "package.json",
+      "node_modules/ffmpeg-static/**/*",
+      "node_modules/ffprobe-static/**/*",
+      "!node_modules/!(ffmpeg-static|ffprobe-static)/**",
+      "!node_modules/ffprobe-static/bin/darwin/**",
+      "!node_modules/ffprobe-static/bin/linux/**",
+      "!node_modules/ffprobe-static/bin/win32/ia32/**",
+      "!**/*.map",
+      "!.env",
+      "!.env.*",
+      "!data/**"
+    ],
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "icon": "build/icon.ico",
+      "artifactName": "${productName}-Setup-${version}-${arch}.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "perMachine": false,
+      "allowElevation": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Zeniconic",
+      "installerIcon": "build/icon.ico",
+      "uninstallerIcon": "build/icon.ico",
+      "deleteAppDataOnUninstall": false,
+      "runAfterFinish": true
+    },
+    "publish": [
+      {
+        "provider": "github",
+        "owner": "Zunairakamran",
+        "repo": "zeniconic-releases",
+        "releaseType": "release"
+      }
+    ]
+  }
+}

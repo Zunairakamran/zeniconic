@@ -1,0 +1,32 @@
+{
+  "compilerOptions": {
+    "target": "ES2022",
+    "lib": ["ES2022"],
+    "module": "ESNext",
+    "moduleResolution": "bundler",
+    "strict": true,
+    "noUncheckedIndexedAccess": true,
+    "noImplicitOverride": true,
+    "noFallthroughCasesInSwitch": true,
+    "verbatimModuleSyntax": true,
+    "resolveJsonModule": true,
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "noEmit": true,
+    "types": ["node"],
+    "baseUrl": ".",
+    "paths": {
+      "@zeniconic/core": ["packages/core/src/index.ts"],
+      "@zeniconic/edl": ["packages/edl/src/index.ts"],
+      "@zeniconic/media": ["packages/media/src/index.ts"],
+      "@zeniconic/analysis": ["packages/analysis/src/index.ts"],
+      "@zeniconic/planner": ["packages/planner/src/index.ts"],
+      "@zeniconic/render": ["packages/render/src/index.ts"],
+      "@zeniconic/ai": ["packages/ai/src/index.ts"],
+      "@zeniconic/store": ["packages/store/src/index.ts"],
+      "@zeniconic/jobs": ["packages/jobs/src/index.ts"]
+    }
+  },
+  "include": ["packages/**/*.ts", "scripts/**/*.ts", "services/**/*.ts", "tests/**/*.ts"],
+  "exclude": ["node_modules", "docs", "apps"]
+}
