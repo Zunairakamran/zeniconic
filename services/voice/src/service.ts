@@ -110,10 +110,13 @@ function cuesFromText(text: string, totalSec: number): ScriptCue[] {
 }
 
 /**
- * The spoken script, from the EDL's word timings when they exist. Cues are
- * already split to the caption line budget, so one cue is one TTS line and one
- * caption.
+ * The spoken script, from the EDL's word timings when they exist. One caption
+ * cue is one TTS line, but the line budget is deliberately wider than the
+ * caption budget: at 20 characters a caption split would chop the voice into
+ * robotic fragments and multiply the TTS calls.
  */
+const VOICE_LINE_MAX_CHARS = 90;
+
 export function scriptCues(edl: Edl): ScriptCue[] {
   const totalSec = canvasDurationSec(edl);
   const words = edl.captions.words ?? [];
@@ -121,15 +124,14 @@ export function scriptCues(edl: Edl): ScriptCue[] {
     return cuesFromText(edl.audio.voice.text ?? '', totalSec);
   }
 
-  const style = resolveCaptionStyle(edl.captions.style);
   const cues = splitLongCues(
     toCues(words, {
-      maxCharsPerLine: style.maxCharsPerLine,
-      maxLines: style.maxLines,
+      maxCharsPerLine: VOICE_LINE_MAX_CHARS,
+      maxLines: 2,
       language: edl.captions.language ?? 'en-GB',
     }),
-    style.maxCharsPerLine,
-    style.maxLines,
+    VOICE_LINE_MAX_CHARS,
+    2,
   );
 
   return cues
