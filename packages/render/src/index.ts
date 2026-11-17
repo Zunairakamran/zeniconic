@@ -10,7 +10,17 @@ export {
 } from './graph';
 export type { GraphResult } from './graph';
 
-export { buildRenderArgs, renderProfileFor } from './args';
+export {
+  clipEffectFilters,
+  globalEffectFilters,
+  gradeFilters,
+  EffectRenderError,
+  SUPPORTED_EFFECT_TYPES,
+} from './effects';
+export type { SupportedEffectType } from './effects';
+
+export { buildRenderArgs, buildSegmentArgs, gopArgs, renderProfileFor, videoEncodeArgs } from './args';
 export type { Quality, RenderOptions } from './args';
 
-export { edlHash, segmentCacheKey } from './cache';
+export { edlHash, SEGMENT_KEY_VERSION, segmentCacheKey, segmentCacheKeyFor } from './cache';
+export type { SegmentKeyInput } from './cache';

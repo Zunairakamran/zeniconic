@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { durationSec, validateEdl } from '@zeniconic/edl';
 import type { Edl, Profile } from '@zeniconic/edl';
-import { planVariant } from '../src/index';
+import { planSequence, planVariant } from '../src/index';
 import type { PlanRequest } from '../src/index';
 import { POOL_SEEDS, PROFILES, makeRequest, pickHook } from './fixtures';
 
@@ -237,5 +237,32 @@ describe('planVariant assembly', () => {
     const address = edl.overlays.find((overlay) => overlay.kind === 'address');
     expect(address?.text?.length ?? 0).toBeLessThanOrEqual(90);
     expect(validateEdl(edl).valid).toBe(true);
+  });
+});
+
+describe('reference-guided pacing', () => {
+  it('uses the measured average shot length to change clip count', () => {
+    const rooms = ['living', 'kitchen', 'bedroom', 'balcony'] as const;
+    const candidates = Array.from({ length: 24 }, (_, index) => ({
+      shotId: `s${index}`,
+      sourceId: `src${index}`,
+      src: `f${index}.mp4`,
+      room: rooms[index % rooms.length]!,
+      score: 0.8,
+      inSec: 0,
+      outSec: 5,
+      reason: 'synthetic pool',
+    }));
+    const spec = {
+      targetDurationSec: 30,
+      minShotSec: 1.2,
+      maxShotSec: 4.5,
+      roomOrder: [...rooms],
+    };
+    const fast = planSequence(candidates, spec, 'calm', [], 0, 1.5);
+    const slow = planSequence(candidates, spec, 'calm', [], 0, 4);
+    expect(fast.length).toBeGreaterThan(slow.length);
+    expect(fast.reduce((sum, clip) => sum + clip.durationSec, 0)).toBeCloseTo(30, 0);
+    expect(slow.reduce((sum, clip) => sum + clip.durationSec, 0)).toBeCloseTo(30, 0);
   });
 });

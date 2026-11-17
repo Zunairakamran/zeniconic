@@ -64,6 +64,8 @@ export interface BuildRequestInput {
   format?: 'cinematic_hero' | 'marketing_38';
   /** Stable tie-break seed; defaults to one derived from the listing id. */
   seed?: number;
+  /** Optional measured reference style. */
+  style?: { averageShotSec?: number; pacing?: 'slow' | 'medium' | 'fast' };
   /** ISO timestamp, injected for determinism. */
   now: string;
 }
@@ -328,6 +330,7 @@ export function buildRequest(input: BuildRequestInput): PlanRequest {
     },
     seed: input.seed ?? seedFor(input.listingId),
     now: input.now,
+    ...(input.style === undefined ? {} : { referenceStyle: input.style }),
   };
 }
 

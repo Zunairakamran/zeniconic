@@ -9,22 +9,28 @@
  * `electron/main.cjs` is a two-line shim for the existing npm scripts.
  */
 
-import { app, BrowserWindow, dialog, ipcMain, safeStorage, session, shell } from 'electron';
+import { app, BrowserWindow, dialog, ipcMain, nativeTheme, protocol, safeStorage, session, shell } from 'electron';
 import { existsSync } from 'node:fs';
-import { readdir, rm, stat } from 'node:fs/promises';
+import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { promisify } from 'node:util';
 import { join, resolve } from 'node:path';
 import { OpenRouterClient } from '../../packages/ai/src/index';
-import { JobRunner } from '../../packages/jobs/src/index';
+import { JsonJobStore, JobRunner } from '../../packages/jobs/src/index';
 import type { StageExecutor } from '../../packages/jobs/src/index';
+import { CostLedger } from '../../packages/ledger/src/index';
 import {
+  AGENT_EVENT_CHANNEL,
   CHANNELS,
   createHandlers,
   createSettings,
   JOB_PROGRESS_CHANNEL,
 } from '../../packages/ipc/src/index';
 import type {
+  AgentEventDto,
   Handlers,
   JobProgressEvent,
+  ReferencePort,
   SecretCipher,
   VoiceModelPort,
 } from '../../packages/ipc/src/index';
@@ -36,13 +42,45 @@ import {
   KokoroModelDownloader,
   modelRoot,
 } from '../../services/voice/src/index';
+import { createAgentService } from './agent-service';
 import { createChatService } from './chat';
+import { createRemixService } from './remix';
+import { createReviewService } from './review-service';
+import { createMusicService } from './music-service';
 import { DesktopPipeline } from './pipeline';
 import { createSplashWindow, waitMinimum } from './splash';
+import { previewResponse } from './media-protocol';
 import { setupAutoUpdate } from './updater';
+import { resolveFontsDirectory } from '../../services/pipeline/ffmpeg-overlays';
+import { ffmpegPath } from '../../packages/media/src/index';
+import { transcribeAudio } from '../../services/remix/src/index';
+import {
+  analyseReference,
+  clearReferenceProfile,
+  readReferenceProfile,
+  saveReferenceProfile,
+} from '../../services/reference/src/index';
+import type { ReferenceProfileDto } from '../../packages/ipc/src/index';
+import { basename } from 'node:path';
 
 const isDev = !app.isPackaged;
 const DEV_URL = process.env.ZENICONIC_DEV_URL || 'http://localhost:5173';
+const MEDIA_SCHEME = 'zeniconic-media';
+
+// Must run before `app.whenReady()`. The scheme serves draft previews to a
+// <video> element with range requests; nothing else is readable through it.
+protocol.registerSchemesAsPrivileged([
+  {
+    scheme: MEDIA_SCHEME,
+    privileges: {
+      standard: true,
+      secure: true,
+      supportFetchAPI: true,
+      stream: true,
+      bypassCSP: false,
+    },
+  },
+]);
 /** Development writes beside the checkout, never a hard-coded drive. */
 const DEV_DATA_DIR = join(app.getAppPath(), 'data');
 
@@ -75,6 +113,11 @@ function sendProgress(event: JobProgressEvent): void {
   mainWindow.webContents.send(JOB_PROGRESS_CHANNEL, event);
 }
 
+function sendAgentEvent(event: AgentEventDto): void {
+  if (mainWindow === null || mainWindow.isDestroyed()) return;
+  mainWindow.webContents.send(AGENT_EVENT_CHANNEL, event);
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -94,7 +137,7 @@ export function contentSecurityPolicy(): string {
   const style = ["'self'", "'unsafe-inline'"];
   const img = ["'self'", 'data:', 'blob:'];
   const font = ["'self'", 'data:'];
-  const media = ["'self'", 'blob:', 'data:'];
+  const media = ["'self'", 'blob:', 'data:', 'zeniconic-media:'];
 
   if (isDev) {
     const origin = new URL(DEV_URL).origin;
@@ -127,6 +170,18 @@ export function contentSecurityPolicy(): string {
     "form-action 'none'",
     "frame-ancestors 'none'",
   ].join('; ');
+}
+
+/**
+ * Serves `zeniconic-media://preview/<name>.mp4` from `<data>/previews` only.
+ * Range requests are answered with a 206 so seeking works; any other host,
+ * traversal attempt or non-MP4 name is a 404.
+ */
+function installMediaProtocol(root: string): void {
+  const previews = resolve(root, 'previews');
+  protocol.handle(MEDIA_SCHEME, (request) =>
+    previewResponse(previews, request.url, request.headers.get('range')),
+  );
 }
 
 /** CSP plus a navigation guard: a top frame can never leave the app. */
@@ -197,8 +252,7 @@ function secureCipher(): SecretCipher {
   };
 }
 
-async function chooseFootageFolder(): Promise<string | null> {
-  const options: Electron.OpenDialogOptions = {
+async function chooseFootageFolder(): Promise<string | null> {  const options: Electron.OpenDialogOptions = {
     title: 'Choose your footage folder',
     buttonLabel: 'Use this folder',
     properties: ['openDirectory'],
@@ -213,8 +267,39 @@ async function chooseFootageFolder(): Promise<string | null> {
   return result.filePaths[0] ?? null;
 }
 
-function createWindow(initialView?: 'settings', showWhenReady = true): BrowserWindow {
-  const win = new BrowserWindow({
+async function chooseReferenceVideo(): Promise<string | null> {
+  const options: Electron.OpenDialogOptions = {
+    title: 'Choose a reference video',
+    buttonLabel: 'Use this video',
+    properties: ['openFile'],
+    filters: [
+      { name: 'Video', extensions: ['mp4', 'mov', 'm4v', 'mkv', 'webm', 'avi', 'mts'] },
+    ],
+  };
+  const result =
+    mainWindow === null
+      ? await dialog.showOpenDialog(options)
+      : await dialog.showOpenDialog(mainWindow, options);
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0] ?? null;
+}
+
+async function chooseRemixVideo(): Promise<string | null> {
+  const options: Electron.OpenDialogOptions = {
+    title: 'Choose a finished video to remix',
+    buttonLabel: 'Use this video',
+    properties: ['openFile'],
+    filters: [{ name: 'Video', extensions: ['mp4', 'mov', 'm4v', 'mkv', 'webm', 'avi'] }],
+  };
+  const result =
+    mainWindow === null
+      ? await dialog.showOpenDialog(options)
+      : await dialog.showOpenDialog(mainWindow, options);
+  if (result.canceled || result.filePaths.length === 0) return null;
+  return result.filePaths[0] ?? null;
+}
+
+function createWindow(initialView?: 'settings', showWhenReady = true): BrowserWindow {  const win = new BrowserWindow({
     width: 1440,
     height: 900,
     minWidth: 1180,
@@ -347,9 +432,28 @@ async function start(): Promise<void> {
   const root = dataRoot();
 
   installSecurity();
+  installMediaProtocol(root);
 
   const store = new JsonStore(root);
   await store.init();
+
+  // Persisted jobs and spend. Hydration is read-only: nothing resumes at boot
+  // until its source binding is known.
+  const jobStore = new JsonJobStore(root);
+  await jobStore.init();
+  const ledger = new CostLedger(root, { caps: models.budgets });
+
+  const canSpend = async (usd: number, listingId?: string): Promise<boolean> => {
+    try {
+      const verdict = await ledger.evaluate({
+        amountUsd: usd,
+        ...(listingId === undefined ? {} : { listingId }),
+      });
+      return verdict.allowed;
+    } catch {
+      return false;
+    }
+  };
 
   // Cheap, once per launch, and never blocks the window.
   void sweepOrphanedWorkDirs(root);
@@ -378,6 +482,48 @@ async function start(): Promise<void> {
     dataDir: root,
     repoRoot: app.isPackaged ? app.getAppPath() : process.cwd(),
     onProgress: sendProgress,
+    // Gemini Flash TTS is the configured studio voice; Kokoro is the backup.
+    ttsModel: process.env.STUDIO_TTS_MODEL?.trim() || models.roles.tts.model,
+    reduceMotion: nativeTheme.shouldUseReducedMotion,
+    voiceOnCost: async (usd, listingId) => {
+      await ledger.record({
+        role: 'voice',
+        model: process.env.STUDIO_TTS_MODEL?.trim() || models.roles.tts.model,
+        listingId,
+        costUsd: usd,
+      });
+    },
+    musicTrack: async () => (await settings.get()).musicTrack,
+    tagging: {
+      model: models.roles.tagging.model,
+      maxUsd: 0.25,
+      enabled: async () => {
+        const flag = process.env.ZENICONIC_TAG;
+        if (flag === '1') return true;
+        if (flag === '0') return false;
+        return (await settings.get()).tagOnAnalyse;
+      },
+      canSpend: (usd, listingId) => canSpend(usd, listingId),
+      client: async () => {
+        const key = await settings.getKey();
+        if (typeof key !== 'string' || key.trim().length === 0) return undefined;
+        return new OpenRouterClient({
+          apiKey: key,
+          fetchImpl: (url, init) => fetch(url, init),
+          ...(process.env.OPENROUTER_BASE_URL?.trim()
+            ? { baseUrl: process.env.OPENROUTER_BASE_URL.trim() }
+            : {}),
+        });
+      },
+      onCost: async (usd, listingId) => {
+        await ledger.record({
+          role: 'tagging',
+          model: models.roles.tagging.model,
+          listingId,
+          costUsd: usd,
+        });
+      },
+    },
   });
 
   /**
@@ -401,6 +547,30 @@ async function start(): Promise<void> {
         fetchImpl: (url, init) => fetch(url, init),
       });
       return client.complete(request);
+    },
+  });
+
+  // The agent uses the same secure key and the same version store as the chat.
+  const agent = createAgentService({
+    store,
+    chat,
+    apiKey: () => settings.getKey(),
+    models: [models.roles.agent.model, ...models.roles.agent.candidates],
+    ...(process.env.OPENROUTER_BASE_URL?.trim()
+      ? { baseUrl: process.env.OPENROUTER_BASE_URL.trim() }
+      : {}),
+    onEvent: sendAgentEvent,
+    dataDir: root,
+    fontsDir: resolveFontsDirectory(app.isPackaged ? app.getAppPath() : process.cwd()),
+    canSpend: (usd, listingId) => canSpend(usd, listingId),
+    onSpend: async (input) => {
+      await ledger.record({
+        role: input.role,
+        model: input.model,
+        listingId: input.listingId,
+        runId: input.runId,
+        costUsd: input.costUsd,
+      });
     },
   });
 
@@ -433,7 +603,45 @@ async function start(): Promise<void> {
     },
   };
 
-  const runner = new JobRunner({ executor });
+  const runner = new JobRunner({ executor, store: jobStore });
+  const restoredJobs = await runner.load();
+
+  // A crash during analysis leaves a queued/running job with its folder in the
+  // checkpoint. Rebind the source and let the runner resume from the last
+  // completed stage.
+  const resumable = restoredJobs.filter(
+    (job) =>
+      job.kind === 'analysis' &&
+      typeof job.checkpoint === 'string' &&
+      job.checkpoint.length > 0 &&
+      (job.status === 'queued' || job.status === 'running'),
+  );
+  for (const job of resumable) {
+    pipeline.prepareAnalysis({
+      jobId: job.id,
+      listingId: job.listingId,
+      folder: job.checkpoint as string,
+    });
+    void runner
+      .run(job.id)
+      .then(async (finished) => {
+        if (finished.status === 'complete') {
+          await store.update(job.listingId, { status: 'ready' }).catch(() => undefined);
+        } else if (finished.status === 'failed') {
+          await store
+            .update(job.listingId, {
+              status: 'failed',
+              lastError: finished.error ?? 'Analysis failed.',
+            })
+            .catch(() => undefined);
+        } else if (finished.status === 'cancelled') {
+          await store.update(job.listingId, { status: 'draft' }).catch(() => undefined);
+        }
+      })
+      .catch((error: unknown) => {
+        console.warn(`[jobs] could not resume ${job.id}: ${messageOf(error)}`);
+      });
+  }
   const downloader = new KokoroModelDownloader({ root: modelRoot(root) });
 
   /**
@@ -471,17 +679,177 @@ async function start(): Promise<void> {
       return await downloader.status();
     },
   };
+  const reference: ReferencePort = {
+    chooseFile: chooseReferenceVideo,
+    async analyze(listingId: string, file: string): Promise<ReferenceProfileDto> {
+      const profile = await analyseReference({ file });
+      const stored = await saveReferenceProfile(store.dirFor(listingId), { file, profile });
+      return {
+        analyzedAt: stored.analyzedAt,
+        fileName: basename(file),
+        profile: stored.profile,
+      } as unknown as ReferenceProfileDto;
+    },
+    async get(listingId: string): Promise<ReferenceProfileDto | null> {
+      const stored = await readReferenceProfile(store.dirFor(listingId));
+      if (stored === undefined) return null;
+      return {
+        analyzedAt: stored.analyzedAt,
+        fileName: basename(stored.file),
+        profile: stored.profile,
+      } as unknown as ReferenceProfileDto;
+    },
+    async clear(listingId: string): Promise<void> {
+      await clearReferenceProfile(store.dirFor(listingId));
+    },
+  };
+
+  const remix = createRemixService({    store,
+    transcribe: async (file: string) => {
+      const dir = await mkdtemp(join(root, 'tmp', 'remix-audio-'));
+      const wav = join(dir, 'audio.wav');
+      try {
+        await promisify(execFile)(ffmpegPath(), [
+          '-y', '-v', 'error', '-i', file, '-vn', '-ac', '1', '-ar', '16000',
+          '-c:a', 'pcm_s16le', wav,
+        ]);
+        const data = await readFile(wav);
+        const key = await settings.getKey();
+        if (typeof key !== 'string' || key.trim().length === 0) {
+          throw new Error('Add an OpenRouter key in Settings to transcribe speech.');
+        }
+        const result = await transcribeAudio(
+          { data, format: 'wav' },
+          {
+            getApiKey: () => key,
+            model: models.roles.transcription.model,
+            ...(process.env.OPENROUTER_BASE_URL?.trim()
+              ? { baseUrl: process.env.OPENROUTER_BASE_URL.trim() }
+              : {}),
+          },
+        );
+        return {
+          words: result.words,
+          durationSec: result.durationSec,
+          model: models.roles.transcription.model,
+          // Only present when OpenRouter reports it; never guessed.
+          ...(result.costUsd === undefined ? {} : { costUsd: result.costUsd }),
+        };
+      } finally {
+        await rm(dir, { recursive: true, force: true }).catch(() => undefined);
+      }
+    },
+    onTranscription: async ({ listingId, model, costUsd }) => {
+      if (!(costUsd > 0)) return;
+      await ledger.record({
+        role: 'transcription',
+        model,
+        listingId,
+        costUsd,
+      });
+    },
+    canSpend: (usd, listingId) => canSpend(usd, listingId),
+    estimateTranscriptionUsd: (seconds) => {
+      // The rate lives in models.json when one is pinned. Without it there is no
+      // honest estimate, so the pre-flight is skipped rather than invented.
+      const role = models.roles.transcription as {
+        perSecondUsd?: number;
+        perMinuteUsd?: number;
+      };
+      if (typeof role.perSecondUsd === 'number' && role.perSecondUsd > 0) {
+        return role.perSecondUsd * seconds;
+      }
+      if (typeof role.perMinuteUsd === 'number' && role.perMinuteUsd > 0) {
+        return (role.perMinuteUsd * seconds) / 60;
+      }
+      return undefined;
+    },
+  });
+
+  const review = createReviewService({
+    dataDir: root,
+    model: models.roles.review.model,
+    client: async () => {
+      const key = await settings.getKey();
+      if (typeof key !== 'string' || key.trim().length === 0) return undefined;
+      return new OpenRouterClient({
+        apiKey: key,
+        fetchImpl: (url, init) => fetch(url, init),
+        ...(process.env.OPENROUTER_BASE_URL?.trim()
+          ? { baseUrl: process.env.OPENROUTER_BASE_URL.trim() }
+          : {}),
+      });
+    },
+    onCost: async (usd) => {
+      await ledger.record({
+        role: 'review',
+        model: models.roles.review.model,
+        listingId: 'unknown',
+        costUsd: usd,
+      });
+    },
+  });
+
+  const music = createMusicService({
+    dataDir: root,
+    model: models.roles.music.model,
+    apiKey: () => settings.getKey(),
+    canSpend: (usd) => canSpend(usd),
+    onCost: async (usd) => {
+      await ledger.record({
+        role: 'music',
+        model: models.roles.music.model,
+        listingId: 'unknown',
+        costUsd: usd,
+      });
+    },
+    onSelect: (fileName) =>
+      settings.setMusic === undefined ? undefined : settings.setMusic(fileName),
+    ...(process.env.OPENROUTER_BASE_URL?.trim()
+      ? { baseUrl: process.env.OPENROUTER_BASE_URL.trim() }
+      : {}),
+  });
+
   const handlers = createHandlers({
     store,
     runner,
     pipeline,
     settings,
     chat,
+    agent,
     chooseFolder: chooseFootageFolder,
     dataDir: root,
     openPath: (path) => shell.openPath(path),
     voiceModel,
     voiceGallery,
+    spend: {
+      summary: async () => {
+        const summary = await ledger.summary();
+        return { monthUsd: summary.monthUsd };
+      },
+    },
+    tagging: {
+      estimate: (listingId) => pipeline.estimateTagging(listingId),
+      start: (listingId) => pipeline.runTagging(listingId),
+    },
+    reference,
+    remix: {
+      chooseFile: chooseRemixVideo,
+      analyze: (listingId, file, transcribe) => remix.analyze({ listingId, file, transcribe }),
+      get: (listingId) => remix.get(listingId),
+      create: (listingId, preset) => remix.create({ listingId, preset }),
+      reorder: (listingId, preset, order) => remix.reorder({ listingId, preset, order }),
+      retag: (listingId, shotId, room) => remix.retag({ listingId, shotId, room }),
+    },
+    review: {
+      inspect: (input) => review.inspect(input),
+    },
+    music: {
+      generate: (prompt) => music.generate(prompt),
+    },
+    refinePreview: {
+      preview: (input) => agent.preview(input),
+    },
   });
 
   registerIpc(handlers);

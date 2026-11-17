@@ -11,9 +11,9 @@ import { canvasDurationSec } from '../../../packages/overlays/src/index';
 import { PROFILES } from '../../../packages/render/src/profiles';
 import type { ProfileId } from '../../../packages/render/src/profiles';
 import { VideoComposition } from './Composition';
+import type { VideoCompositionProps } from './Composition';
 import { BrandIntro } from './BrandIntro';
 import { DEFAULT_BRAND } from './types';
-import type { VideoProps } from './types';
 
 const PLACEHOLDER_FRAMES = 10;
 
@@ -36,13 +36,15 @@ export function RemotionRoot() {
       />
       {profiles.map((profile) => {
         const preset = PROFILES[profile];
-        const defaultProps: VideoProps = {
+        const defaultProps: VideoCompositionProps = {
           edl: null,
           profile,
           brand: DEFAULT_BRAND,
           captions: false,
           listingDir: '',
           missingClipIds: [],
+          // Studio preview draws full motion; a render passes the real setting.
+          reduceMotion: false,
         };
 
         return (

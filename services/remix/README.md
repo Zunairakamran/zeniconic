@@ -64,6 +64,11 @@ buildOriginalOrder(shots: readonly TaggedShot[], facts: Facts, options?): Timeli
 buildPriceLedOrder(shots: readonly TaggedShot[], facts: Facts, options?): TimelineSlot[]
 orderForPreset(preset, shots, facts, options?): TimelineSlot[]
 
+reorderSlots(slots: readonly RemixSlotDto[], order: readonly string[]): RemixSlotDto[]
+setSlotRoom(slots: readonly RemixSlotDto[], shotId: string, room: RemixRoom): RemixSlotDto[]
+requireRoom(value: unknown): RemixRoom
+isRemixRoom(value: unknown): value is RemixRoom
+
 cleanCaptions(words: readonly TranscriptWord[], options?): CleanedCaptionCue[]
 ```
 

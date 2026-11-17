@@ -1,27 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
+import type { ShotRow } from '../../../../packages/ipc/src/index';
+import { api } from '../api';
 import type { ScreenProps } from '../types';
-import { Badge, Button, Card, Eyebrow, Icon } from '../ui';
+import { Badge, Button, Card, EmptyState, Eyebrow, Icon } from '../ui';
 import './Variants.css';
-
-interface BoardShot {
-  label: string;
-  tone: string;
-  seconds: string;
-}
-
-const boardShots: BoardShot[] = [
-  { label: 'entrance', tone: 'entry', seconds: '2.4s' },
-  { label: 'hallway', tone: 'hall', seconds: '2.8s' },
-  { label: 'living room', tone: 'calm', seconds: '3.2s' },
-  { label: 'kitchen', tone: 'social', seconds: '3.4s' },
-  { label: 'bedroom', tone: 'bedroom', seconds: '2.6s' },
-  { label: 'balcony', tone: 'balcony', seconds: '2.2s' },
-  { label: 'view', tone: 'view', seconds: '2.4s' },
-  { label: 'bathroom', tone: 'bath', seconds: '1.8s' },
-  { label: 'bedroom two', tone: 'bedroom', seconds: '2.4s' },
-  { label: 'living room two', tone: 'calm', seconds: '2.6s' },
-  { label: 'exterior', tone: 'exterior', seconds: '2.2s' },
-];
 
 function runtime(seconds: number): string {
   const wholeSeconds = Math.round(seconds * 10) / 10;
@@ -35,6 +17,40 @@ function stillUrl(path: string): string {
   return `url("${encodeURI(`file:///${path.replace(/\\/g, '/')}`)}")`;
 }
 
+/** Scene wash for a real room tag; presentation only, never shot data. */
+function roomTone(room: string): string {
+  switch (room.toLowerCase()) {
+    case 'kitchen':
+    case 'dining':
+      return 'social';
+    case 'living':
+      return 'calm';
+    case 'bedroom':
+      return 'bedroom';
+    case 'bathroom':
+    case 'bath':
+      return 'bath';
+    case 'balcony':
+      return 'balcony';
+    case 'view':
+      return 'view';
+    case 'exterior':
+    case 'amenity':
+      return 'exterior';
+    case 'hall':
+      return 'hall';
+    default:
+      return 'entry';
+  }
+}
+
+/** Index order: clip, then time inside the clip. */
+function inIndexOrder(rows: ShotRow[]): ShotRow[] {
+  return [...rows].sort(
+    (a, b) => a.sourceId.localeCompare(b.sourceId) || a.startSec - b.startSec,
+  );
+}
+
 export function VariantsScreen({
   listing,
   variants,
@@ -42,9 +58,37 @@ export function VariantsScreen({
   onApproveVariant,
   onPreviewVariant,
 }: ScreenProps) {
-  const [highlight, setHighlight] = useState(5);
+  const [shots, setShots] = useState<ShotRow[]>([]);
+  const [shotsLoading, setShotsLoading] = useState(true);
+  const [shotsError, setShotsError] = useState<string | undefined>();
+  const [highlight, setHighlight] = useState(0);
   const [stills, setStills] = useState<Record<string, string>>({});
   const [previewError, setPreviewError] = useState<string | undefined>();
+
+  // The storyboard is the analysis shot order, not a variant's EDL: variants
+  // store a plan, so showing one as "the" storyboard would invent an order.
+  useEffect(() => {
+    let live = true;
+    setShotsLoading(true);
+    setShotsError(undefined);
+    setHighlight(0);
+    api.shots
+      .list(listing.id)
+      .then((rows) => {
+        if (!live) return;
+        setShots(inIndexOrder(rows));
+        setShotsLoading(false);
+      })
+      .catch((error: unknown) => {
+        if (!live) return;
+        setShots([]);
+        setShotsError(error instanceof Error ? error.message : String(error));
+        setShotsLoading(false);
+      });
+    return () => {
+      live = false;
+    };
+  }, [listing.id]);
 
   const approve = (id: string, approved: boolean) => {
     void onApproveVariant(id, approved).catch((error: unknown) => {
@@ -62,6 +106,13 @@ export function VariantsScreen({
     setStills((current) => ({ ...current, [id]: path }));
   };
 
+  const boardTitle = 'Shot order from analysis';
+  const boardSub = shotsLoading
+    ? 'Reading the shot index'
+    : shots.length === 0
+      ? 'No shots indexed'
+      : `${shots.length} shots · sorted by clip and time`;
+
   return (
     <div className="screen variantscreen">
       <header className="variantscreen__head">
@@ -70,7 +121,11 @@ export function VariantsScreen({
             {listing.address} · {variants.length} variants · {listing.community}
           </Eyebrow>
           <h1 className="variantscreen__title">Variants</h1>
-          <p className="variantscreen__sub">Three complete edits. Approve the ones you would send.</p>
+          <p className="variantscreen__sub">
+            {variants.length === 0
+              ? 'No variants yet. Ask for a change or run the analysis to build them.'
+              : `${variants.length} complete edits. Approve the ones you would send.`}
+          </p>
         </div>
         <div className="variantscreen__actions">
           <Button onClick={() => onNavigate('chat')}>Ask for a change</Button>
@@ -185,36 +240,54 @@ export function VariantsScreen({
 
       <Card className="variantscreen__board">
         <div className="variantscreen__boardhead">
-          <h3 className="variantscreen__boardtitle">
-            Storyboard · {variants[0]?.name ?? 'Calm'}
-          </h3>
-          <span className="variantscreen__boardsub">
-            {boardShots.length} shots · shot order from analysis
-          </span>
+          <h3 className="variantscreen__boardtitle">{boardTitle}</h3>
+          <span className="variantscreen__boardsub">{boardSub}</span>
           <span className="variantscreen__boardspacer" />
         </div>
 
-        <div className="variantscreen__strip" role="group" aria-label="Storyboard shot order">
-          {boardShots.map((shot, index) => (
-            <button
-              key={`${shot.label}-${index}`}
-              type="button"
-              className={`variantscreen__sb${highlight === index ? ' is-drag' : ''}`}
-              aria-pressed={highlight === index}
-              aria-label={`Shot ${index + 1}, ${shot.label}, ${shot.seconds}`}
-              onClick={() => setHighlight(index)}
-            >
-              <span
-                className="variantscreen__scene"
-                data-tone={shot.tone}
-                aria-hidden="true"
-              />
-              <span className="variantscreen__sbnum">{String(index + 1).padStart(2, '0')}</span>
-              <span className="variantscreen__grip" aria-hidden="true" />
-              <span className="variantscreen__sbdur">{shot.seconds}</span>
-            </button>
-          ))}
-        </div>
+        {shotsLoading ? (
+          <p className="variantscreen__boardhint" role="status">
+            Reading the shot index for {listing.address}.
+          </p>
+        ) : shots.length === 0 ? (
+          <div className="variantscreen__boardempty">
+            <EmptyState
+              title={shotsError === undefined ? 'No shots indexed yet' : 'Shot index unavailable'}
+              body={
+                shotsError === undefined
+                  ? 'Analysis writes the shot index. Run it on a footage folder and the real shot order, rooms and durations appear here.'
+                  : shotsError
+              }
+              action={
+                <Button size="sm" onClick={() => onNavigate('analysis')}>
+                  Open analysis
+                </Button>
+              }
+            />
+          </div>
+        ) : (
+          <div className="variantscreen__strip" role="group" aria-label="Shot order from analysis">
+            {shots.map((shot, index) => (
+              <button
+                key={shot.shotId}
+                type="button"
+                className={`variantscreen__sb${highlight === index ? ' is-drag' : ''}`}
+                aria-pressed={highlight === index}
+                aria-label={`Shot ${index + 1}, ${shot.room}, ${shot.durationSec.toFixed(1)} seconds`}
+                onClick={() => setHighlight(index)}
+              >
+                <span
+                  className="variantscreen__scene"
+                  data-tone={roomTone(shot.room)}
+                  aria-hidden="true"
+                />
+                <span className="variantscreen__sbnum">{String(index + 1).padStart(2, '0')}</span>
+                <span className="variantscreen__sbdur">{shot.durationSec.toFixed(1)}s</span>
+                <span className="variantscreen__sbroom">{shot.room}</span>
+              </button>
+            ))}
+          </div>
+        )}
 
         <p className="variantscreen__boardhint">
           <Icon name="swap" size={12} />

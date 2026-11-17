@@ -2,8 +2,6 @@ import type { ScreenProps } from '../types';
 import { Button, Card, Eyebrow, Icon, Progress } from '../ui';
 import './Analysis.css';
 
-const revealedOnOpen = 6;
-
 const IDLE_STAGES = [
   'Ingesting',
   'Detecting shots',
@@ -11,8 +9,6 @@ const IDLE_STAGES = [
   'Tagging rooms',
   'Planning',
 ];
-
-const fallbackRooms = ['Living', 'Kitchen', 'Bedroom', 'Bathroom', 'Balcony', 'View', 'Exterior', 'Entry'];
 
 function roomTone(room: string): string {
   switch (room.toLowerCase()) {
@@ -38,15 +34,23 @@ function roomTone(room: string): string {
 export function AnalysisScreen({
   listing,
   candidates,
-  progress,
+  progress: rawProgress,
   analysisJobId,
   analysisError,
   onNavigate,
 }: ScreenProps) {
   const failed = analysisError !== undefined;
+  // Only this screen's job may drive the progress UI; a stale event from a
+  // previous listing must not make a new analysis look finished.
+  const progress =
+    rawProgress !== undefined &&
+    (analysisJobId === undefined || rawProgress.jobId === analysisJobId)
+      ? rawProgress
+      : undefined;
   const hasJob = progress !== undefined || analysisJobId !== undefined;
-  // The contact sheet counts the shots the index actually produced.
-  const totalShots = candidates.length > 0 ? candidates.length : 18;
+  // The contact sheet counts the shots the index actually produced. Until the
+  // index has rows there is nothing to draw, so the sheet says so.
+  const totalShots = candidates.length;
 
   // A direct `#analysis` load has no job to wait for. Say so and offer the two
   // actions that can actually move the user forward instead of spinning at 0%.
@@ -120,7 +124,7 @@ export function AnalysisScreen({
     (progress?.status === 'complete' || (progress?.stage === 'done' && percent >= 100));
   const revealed = done
     ? totalShots
-    : Math.max(revealedOnOpen, Math.round((percent / 100) * totalShots));
+    : Math.min(totalShots, Math.round((percent / 100) * totalShots));
   const scoringPct = done ? 100 : percent;
   const indexProgress =
     progress === undefined ? 0 : progress.stage === 'index' ? percent : 100;
@@ -134,13 +138,10 @@ export function AnalysisScreen({
   const doneCount = done ? 5 : indexDone ? 4 : indexProgress > 0 ? 1 : 0;
   const stageDetail = progress?.detail ?? 'Reading clips on this machine';
 
-  const tiles = Array.from({ length: totalShots }, (_, index) => {
-    const candidate = candidates.length > 0 ? candidates[index % candidates.length] : undefined;
-    return {
-      room: candidate?.room ?? fallbackRooms[index % fallbackRooms.length] ?? 'Living',
-      score: candidate?.score ?? 60 + (index % 20),
-    };
-  }).sort((a, b) => b.score - a.score);
+  const tiles = candidates.map((candidate) => ({
+    room: candidate.room,
+    score: candidate.score,
+  }));
 
   return (
     <div className="screen analysis">
@@ -238,7 +239,9 @@ export function AnalysisScreen({
                     <Progress value={scoringPct} tone={indexDone ? 'sage' : 'brass'} />
                   </div>
                   <p className="analysis-stage__note">
-                    {revealed} of {totalShots} scored · sharpness, light, motion
+                    {totalShots === 0
+                      ? 'Waiting for the index to list shots'
+                      : `${revealed} of ${totalShots} scored · sharpness, light, motion`}
                   </p>
                 </div>
               </li>
@@ -258,7 +261,9 @@ export function AnalysisScreen({
                     <Progress value={indexDone ? 100 : 0} tone="sage" />
                   </div>
                   <p className="analysis-stage__note">
-                    {indexDone ? 'Rooms assigned from the clip names' : 'Queued after scoring'}
+                    {indexDone
+                      ? 'Room tags come from the shot tags; untagged shots stay unknown'
+                      : 'Queued after scoring'}
                   </p>
                 </div>
               </li>
@@ -309,7 +314,9 @@ export function AnalysisScreen({
               {failed
                 ? analysisError
                 : done
-                  ? 'Every shot in the contact sheet is scored.'
+                  ? totalShots === 0
+                    ? 'Analysis finished without a shot index. Check the folder and try again.'
+                    : 'Every shot in the contact sheet is scored.'
                   : stageDetail}
             </p>
 
@@ -339,7 +346,7 @@ export function AnalysisScreen({
           <div className="analysis-sheet__head">
             <h2>Contact sheet</h2>
             <span className="analysis-sheet__sub">
-              {revealed} of {totalShots} scored
+              {totalShots === 0 ? 'No shots indexed' : `${revealed} of ${totalShots} scored`}
             </span>
             <div className="analysis-legend" aria-hidden="true">
               <span>
@@ -357,47 +364,61 @@ export function AnalysisScreen({
             </div>
           </div>
 
-          <div
-            className="analysis-grid"
-            role="list"
-            aria-label={`Contact sheet, ${revealed} of ${totalShots} shots scored`}
-          >
-            {tiles.map((tile, index) => {
-              const filled = index < revealed;
-              const scanning = !done && index === revealed;
-              return (
-                <div
-                  key={`${tile.room}-${index}`}
-                  role="listitem"
-                  aria-label={
-                    filled ? `${tile.room}, score ${tile.score}` : scanning ? 'Scanning' : 'Queued shot'
-                  }
-                  className={[
-                    'analysis-tile',
-                    `analysis-tile--${roomTone(tile.room)}`,
-                    filled ? 'analysis-tile--filled' : '',
-                    scanning ? 'analysis-tile--scan' : '',
-                  ]
-                    .filter(Boolean)
-                    .join(' ')}
-                >
-                  {filled ? (
-                    <>
-                      <span className="analysis-tile__photo" aria-hidden="true" />
-                      <span className="analysis-score">{tile.score}</span>
-                      <span className="analysis-room">{tile.room}</span>
-                    </>
-                  ) : (
-                    <span className="analysis-tile__empty" aria-hidden="true" />
-                  )}
-                  {scanning ? <span className="analysis-tile__scan" aria-hidden="true" /> : null}
-                </div>
-              );
-            })}
-          </div>
+          {totalShots === 0 ? (
+            <p className="analysis-sheet__empty" role="status">
+              {done
+                ? 'No shots were indexed from this folder, so there is nothing to score. Check the folder contains readable clips and run the analysis again.'
+                : 'No shots indexed yet. Clips appear here as soon as the index lists them.'}
+            </p>
+          ) : (
+            <div
+              className="analysis-grid"
+              role="list"
+              aria-label={`Contact sheet, ${revealed} of ${totalShots} shots scored`}
+            >
+              {tiles.map((tile, index) => {
+                const filled = index < revealed;
+                const scanning = !done && index === revealed;
+                return (
+                  <div
+                    key={`${tile.room}-${index}`}
+                    role="listitem"
+                    aria-label={
+                      filled
+                        ? `${tile.room}, score ${tile.score}`
+                        : scanning
+                          ? 'Scanning'
+                          : 'Queued shot'
+                    }
+                    className={[
+                      'analysis-tile',
+                      `analysis-tile--${roomTone(tile.room)}`,
+                      filled ? 'analysis-tile--filled' : '',
+                      scanning ? 'analysis-tile--scan' : '',
+                    ]
+                      .filter(Boolean)
+                      .join(' ')}
+                  >
+                    {filled ? (
+                      <>
+                        <span className="analysis-tile__photo" aria-hidden="true" />
+                        <span className="analysis-score">{tile.score}</span>
+                        <span className="analysis-room">{tile.room}</span>
+                      </>
+                    ) : (
+                      <span className="analysis-tile__empty" aria-hidden="true" />
+                    )}
+                    {scanning ? <span className="analysis-tile__scan" aria-hidden="true" /> : null}
+                  </div>
+                );
+              })}
+            </div>
+          )}
 
           <div className="analysis-sheet__foot">
-            {done ? (
+            {totalShots === 0 ? (
+              <span>No shots indexed yet</span>
+            ) : done ? (
               <span>
                 <b>{totalShots} of {totalShots}</b> shots scored
               </span>
@@ -409,8 +430,14 @@ export function AnalysisScreen({
                 </b>
               </span>
             )}
-            <Progress value={(revealed / totalShots) * 100} />
-            <span className="analysis-sheet__eta">{done ? 'Ready to review' : 'Time left not estimated'}</span>
+            <Progress value={totalShots === 0 ? 0 : (revealed / totalShots) * 100} />
+            <span className="analysis-sheet__eta">
+              {totalShots === 0
+                ? 'Waiting for the index'
+                : done
+                  ? 'Ready to review'
+                  : 'Time left not estimated'}
+            </span>
           </div>
         </Card>
       </div>

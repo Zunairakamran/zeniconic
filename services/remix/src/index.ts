@@ -81,6 +81,38 @@ export type {
   TimelineSlot,
 } from './presets';
 
+export { buildRemixEdl } from './edl';
+export type { BuildRemixEdlInput, RemixFacts } from './edl';
+
+export { remapWordsToSlots } from './remap';
+
+export {
+  clearStoryboard,
+  readStoryboard,
+  REMIX_STORYBOARD_FILE,
+  saveStoryboard,
+  slotToDto,
+} from './store';
+export type {
+  RemixShotDto,
+  RemixSlotDto,
+  RemixStoryboard,
+  RemixTranscriptionDto,
+} from './store';
+
+export {
+  MAX_REMIX_ORDER,
+  RemixEditError,
+  asRoom,
+  reorderSlots,
+  requireRoom,
+  setSlotRoom,
+} from './edit';
+export type { RemixEditErrorCode } from './edit';
+
+export { REMIX_ROOMS, isRemixRoom } from './rooms';
+export type { RemixRoom } from './rooms';
+
 export {
   DEFAULT_FILLERS,
   MAX_LINES_PER_CUE,

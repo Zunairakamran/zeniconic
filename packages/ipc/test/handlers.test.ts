@@ -11,7 +11,7 @@ import {
   JOB_PROGRESS_CHANNEL,
 } from '../src/index';
 import type { Channel, VoiceModelStatus } from '../src/index';
-import { FakeChat, FakePipeline, FakeRunner, FakeSettings, FakeStore } from './fakes';
+import { FakeAgent, FakeChat, FakePipeline, FakeReference, FakeRemix, FakeReview, FakeRunner, FakeSettings, FakeStore, FakeTagging } from './fakes';
 
 const LISTING_ID = '2026-11-15-12-oak-avenue';
 
@@ -928,17 +928,36 @@ describe('channel contract', () => {
     'listings:get': 1,
     'listings:updateFacts': 1,
     'analysis:chooseFolder': 0,
+    'dialog:chooseReference': 0,
+    'reference:analyze': 1,
+    'reference:get': 1,
+    'reference:clear': 1,
+    'dialog:chooseRemix': 0,
+    'remix:analyze': 1,
+    'remix:get': 1,
+    'remix:create': 1,
+    'remix:reorder': 1,
+    'remix:retag': 1,
+    'review:inspect': 1,
+    'music:generate': 1,
     'analysis:start': 1,
     'variants:list': 1,
+    'shots:list': 1,
+    'tagging:estimate': 1,
+    'tagging:start': 1,
     'variants:approve': 1,
     'variants:preview': 1,
     'jobs:list': 0,
     'chat:send': 1,
     'chat:apply': 1,
     'chat:versions': 2,
+    'agent:run': 1,
+    'agent:approve': 1,
+    'refine:preview': 1,
     'export:start': 1,
     'settings:get': 0,
     'settings:setTheme': 1,
+  'settings:setTagging': 1,
     'settings:setKey': 1,
     'settings:keyStatus': 0,
     'voice:list': 0,
@@ -970,5 +989,417 @@ describe('channel contract', () => {
     expect(isChannel('voice:modelDelete')).toBe(false);
     expect(isChannel('')).toBe(false);
     expect(isChannel(undefined)).toBe(false);
+  });
+});
+
+describe('agent channels', () => {
+  it('runs the agent with validated input and returns its result', async () => {
+    const agent = new FakeAgent();
+    const local = createHandlers({ store, runner, pipeline, settings, chat, agent });
+    store.seed({ id: LISTING_ID });
+
+    const result = await local['agent:run']({
+      listingId: LISTING_ID,
+      variantId: 'calm',
+      message: 'Make the opening warmer.',
+      autonomy: 'auto',
+    });
+
+    expect(agent.runs).toEqual([
+      { listingId: LISTING_ID, variantId: 'calm', message: 'Make the opening warmer.', autonomy: 'auto' },
+    ]);
+    expect(result).toMatchObject({
+      ok: true,
+      runId: 'agent_test_1',
+      versionId: 'calm-v2',
+      applied: true,
+      costUsd: 0.001,
+      steps: 2,
+    });
+    expect(result.edits).toEqual([
+      { capability: 'apply_grade', summary: 'Applied warm grade.', risk: 'low' },
+    ]);
+  });
+
+  it('turns a rendered preview path into a scheme URL without leaking the path', async () => {
+    const agent = new FakeAgent();
+    agent.result = {
+      ...agent.result,
+      previewPath: 'C:\\Users\\Admin\\AppData\\Roaming\\Zeniconic\\data\\previews\\calm-v2-abc.mp4',
+    };
+    const local = createHandlers({ store, runner, pipeline, settings, chat, agent });
+    store.seed({ id: LISTING_ID });
+
+    const result = await local['agent:run']({
+      listingId: LISTING_ID,
+      variantId: 'calm',
+      message: 'Render a preview.',
+    });
+
+    expect(result.previewUrl).toBe('zeniconic-media://preview/calm-v2-abc.mp4');
+    expect(result).not.toHaveProperty('previewPath');
+  });
+
+  it('renders a draft preview through the port and returns a scheme URL', async () => {
+    const local = createHandlers({
+      store,
+      runner,
+      pipeline,
+      settings,
+      chat,
+      refinePreview: {
+        preview: async () => ({ path: 'D:/data/previews/calm-v3-xyz.mp4' }),
+      },
+    });
+    store.seed({ id: LISTING_ID });
+
+    await expect(
+      local['refine:preview']({ listingId: LISTING_ID, variantId: 'calm' }),
+    ).resolves.toEqual({ previewUrl: 'zeniconic-media://preview/calm-v3-xyz.mp4' });
+  });
+
+  it('surfaces a render failure instead of a broken URL', async () => {
+    const local = createHandlers({
+      store,
+      runner,
+      pipeline,
+      settings,
+      chat,
+      refinePreview: {
+        preview: async () => ({ warning: 'Preview failed: no source file.' }),
+      },
+    });
+    store.seed({ id: LISTING_ID });
+
+    await expect(
+      local['refine:preview']({ listingId: LISTING_ID, variantId: 'calm' }),
+    ).rejects.toMatchObject({ code: 'E_PIPELINE', message: 'Preview failed: no source file.' });
+  });
+
+  it('rejects an empty message before reaching the model', async () => {
+    const agent = new FakeAgent();
+    const local = createHandlers({ store, runner, pipeline, settings, chat, agent });
+    store.seed({ id: LISTING_ID });
+
+    await expect(
+      local['agent:run']({ listingId: LISTING_ID, variantId: 'calm', message: '   ' }),
+    ).rejects.toMatchObject({ code: 'E_INVALID_INPUT' });
+    expect(agent.runs).toEqual([]);
+  });
+
+  it('refuses when the build has no agent', async () => {
+    store.seed({ id: LISTING_ID });
+    await expect(
+      handlers['agent:run']({ listingId: LISTING_ID, variantId: 'calm', message: 'Trim it.' }),
+    ).rejects.toMatchObject({ code: 'E_PIPELINE' });
+  });
+
+  it('passes an approval to the running agent', async () => {
+    const agent = new FakeAgent();
+    const local = createHandlers({ store, runner, pipeline, settings, chat, agent });
+
+    await expect(
+      local['agent:approve']({ runId: 'agent_test_1', approved: true }),
+    ).resolves.toEqual({ ok: true });
+    expect(agent.approvals).toEqual([{ runId: 'agent_test_1', approved: true }]);
+  });
+
+  it('rejects an approval for an id that is not an agent run', async () => {
+    const agent = new FakeAgent();
+    const local = createHandlers({ store, runner, pipeline, settings, chat, agent });
+
+    await expect(
+      local['agent:approve']({ runId: '../evil', approved: true }),
+    ).rejects.toMatchObject({ code: 'E_INVALID_INPUT' });
+    expect(agent.approvals).toEqual([]);
+  });
+});
+
+describe('shots', () => {
+  it('returns the persisted shot rows for a listing', async () => {
+    store.seed({ id: LISTING_ID });
+    pipeline.shots = [
+      {
+        shotId: 's_aaaaaaaa_sh1',
+        sourceId: 's_aaaaaaaa',
+        room: 'living',
+        startSec: 0,
+        endSec: 3.5,
+        durationSec: 3.5,
+        score: 0.82,
+        sellingPoints: ['natural_light'],
+        defects: [],
+        reason: 'measured',
+      },
+    ];
+
+    const rows = await handlers['shots:list'](LISTING_ID);
+    expect(rows).toHaveLength(1);
+    expect(rows[0]).toMatchObject({ shotId: 's_aaaaaaaa_sh1', room: 'living', score: 0.82 });
+  });
+
+  it('returns an empty list before analysis', async () => {
+    store.seed({ id: LISTING_ID });
+    await expect(handlers['shots:list'](LISTING_ID)).resolves.toEqual([]);
+  });
+
+  it('rejects a malformed listing id and an unknown listing', async () => {
+    await expect(handlers['shots:list']('../etc')).rejects.toMatchObject({ code: 'E_INVALID_INPUT' });
+    await expect(handlers['shots:list'](LISTING_ID)).rejects.toMatchObject({ code: 'E_NOT_FOUND' });
+  });
+});
+
+describe('tagging channels', () => {
+  it('prices the persisted shots and starts a tagging run', async () => {
+    const tagging = new FakeTagging();
+    const local = createHandlers({ store, runner, pipeline, settings, chat, tagging });
+    store.seed({ id: LISTING_ID });
+
+    const estimate = await local['tagging:estimate'](LISTING_ID);
+    expect(estimate).toMatchObject({ shots: 9, usd: 0.0144, tagged: 0 });
+
+    const run = await local['tagging:start'](LISTING_ID);
+    expect(run).toMatchObject({ tagged: 9, failed: 0, costUsd: 0.014 });
+    expect(tagging.estimates).toEqual([LISTING_ID]);
+    expect(tagging.runs).toEqual([LISTING_ID]);
+  });
+
+  it('refuses when tagging is not available', async () => {
+    store.seed({ id: LISTING_ID });
+    await expect(handlers['tagging:estimate'](LISTING_ID)).rejects.toMatchObject({ code: 'E_PIPELINE' });
+    await expect(handlers['tagging:start'](LISTING_ID)).rejects.toMatchObject({ code: 'E_PIPELINE' });
+  });
+
+  it('validates the listing id', async () => {
+    const tagging = new FakeTagging();
+    const local = createHandlers({ store, runner, pipeline, settings, chat, tagging });
+    await expect(local['tagging:start']('../escape')).rejects.toMatchObject({ code: 'E_INVALID_INPUT' });
+  });
+
+  it('persists the auto-tagging toggle', async () => {
+    const seen: boolean[] = [];
+    const port = Object.assign(new FakeSettings(), {
+      async setTagging(enabled: boolean) {
+        seen.push(enabled);
+      },
+    });
+    const local = createHandlers({ store, runner, pipeline, settings: port });
+    await local['settings:setTagging'](true);
+    expect(seen).toEqual([true]);
+    await expect(local['settings:setTagging']('yes' as never)).rejects.toMatchObject({
+      code: 'E_INVALID_INPUT',
+    });
+  });
+});
+
+describe('reference channels', () => {
+  it('picks a file and analyses it into a path-free profile', async () => {
+    const reference = new FakeReference();
+    const local = createHandlers({ store, runner, pipeline, settings, chat, reference });
+    store.seed({ id: LISTING_ID });
+
+    const picked = await local['dialog:chooseReference']();
+    expect(picked).toMatch(/refs[\\/]luxury\.mp4$/);
+
+    const profile = await local['reference:analyze']({
+      listingId: LISTING_ID,
+      path: 'C:/refs/luxury.mp4',
+    });
+    expect(profile.fileName).toBe('luxury.mp4');
+    expect(profile.profile.pacing).toBe('fast');
+    expect(reference.analyzed).toHaveLength(1);
+    expect(reference.analyzed[0]?.listingId).toBe(LISTING_ID);
+    expect(reference.analyzed[0]?.file).toMatch(/refs[\\/]luxury\.mp4$/);
+  });
+
+  it('rejects URLs and non-video paths before touching disk', async () => {
+    const reference = new FakeReference();
+    const local = createHandlers({ store, runner, pipeline, settings, chat, reference });
+    store.seed({ id: LISTING_ID });
+
+    await expect(
+      local['reference:analyze']({ listingId: LISTING_ID, path: 'https://youtu.be/x' }),
+    ).rejects.toMatchObject({ code: 'E_INVALID_INPUT' });
+    await expect(
+      local['reference:analyze']({ listingId: LISTING_ID, path: 'C:/notes.txt' }),
+    ).rejects.toMatchObject({ code: 'E_INVALID_INPUT' });
+    expect(reference.analyzed).toEqual([]);
+  });
+
+  it('gets and clears the saved profile', async () => {
+    const reference = new FakeReference();
+    const local = createHandlers({ store, runner, pipeline, settings, chat, reference });
+    store.seed({ id: LISTING_ID });
+
+    const profile = await local['reference:get'](LISTING_ID);
+    expect(profile?.profile.aspect).toBe('9:16');
+
+    await local['reference:clear'](LISTING_ID);
+    expect(reference.cleared).toEqual([LISTING_ID]);
+  });
+
+  it('returns null when reference analysis is unavailable', async () => {
+    store.seed({ id: LISTING_ID });
+    await expect(handlers['dialog:chooseReference']()).resolves.toBeNull();
+    await expect(handlers['reference:get'](LISTING_ID)).resolves.toBeNull();
+  });
+});
+
+describe('remix channels', () => {
+  it('analyses a video and creates a preset variant', async () => {
+    const remix = new FakeRemix();
+    const local = createHandlers({ store, runner, pipeline, settings, chat, remix });
+    store.seed({ id: LISTING_ID });
+
+    const picked = await local['dialog:chooseRemix']();
+    expect(picked).toMatch(/remix[\\/]cut\.mp4$/);
+
+    const storyboard = await local['remix:analyze']({
+      listingId: LISTING_ID,
+      file: 'C:/remix/cut.mp4',
+    });
+    expect(storyboard.fileName).toBe('cut.mp4');
+    expect(storyboard.presets.marketing).toHaveLength(1);
+    expect(remix.analyzed).toHaveLength(1);
+
+    const variant = await local['remix:create']({ listingId: LISTING_ID, preset: 'marketing' });
+    expect(variant.id).toBe('remix');
+    expect(remix.created).toEqual([{ listingId: LISTING_ID, preset: 'marketing' }]);
+  });
+
+  it('rejects a URL and an unknown preset', async () => {
+    const remix = new FakeRemix();
+    const local = createHandlers({ store, runner, pipeline, settings, chat, remix });
+    store.seed({ id: LISTING_ID });
+
+    await expect(
+      local['remix:analyze']({ listingId: LISTING_ID, file: 'https://youtu.be/x' }),
+    ).rejects.toMatchObject({ code: 'E_INVALID_INPUT' });
+    await expect(
+      local['remix:create']({ listingId: LISTING_ID, preset: 'nope' as never }),
+    ).rejects.toMatchObject({ code: 'E_INVALID_INPUT' });
+  });
+
+  it('validates and forwards a manual order and a room tag', async () => {
+    const remix = new FakeRemix();
+    const local = createHandlers({ store, runner, pipeline, settings, chat, remix });
+    store.seed({ id: LISTING_ID });
+
+    const reordered = await local['remix:reorder']({
+      listingId: LISTING_ID,
+      preset: 'marketing',
+      order: ['sh1'],
+    });
+    expect(reordered.orders?.marketing).toEqual(['sh1']);
+    expect(remix.reordered).toEqual([
+      { listingId: LISTING_ID, preset: 'marketing', order: ['sh1'] },
+    ]);
+
+    const tagged = await local['remix:retag']({
+      listingId: LISTING_ID,
+      shotId: 'sh1',
+      room: 'kitchen',
+    });
+    expect(tagged.rooms?.sh1).toBe('kitchen');
+    expect(remix.retagged).toEqual([
+      { listingId: LISTING_ID, shotId: 'sh1', room: 'kitchen' },
+    ]);
+  });
+
+  it('rejects a duplicated order and an unknown room before touching the port', async () => {
+    const remix = new FakeRemix();
+    const local = createHandlers({ store, runner, pipeline, settings, chat, remix });
+    store.seed({ id: LISTING_ID });
+
+    await expect(
+      local['remix:reorder']({
+        listingId: LISTING_ID,
+        preset: 'marketing',
+        order: ['sh1', 'sh1'],
+      }),
+    ).rejects.toMatchObject({ code: 'E_INVALID_INPUT' });
+    await expect(
+      local['remix:retag']({
+        listingId: LISTING_ID,
+        shotId: 'sh1',
+        room: 'garage',
+      }),
+    ).rejects.toMatchObject({ code: 'E_INVALID_INPUT' });
+
+    expect(remix.reordered).toHaveLength(0);
+    expect(remix.retagged).toHaveLength(0);
+  });
+
+  it('returns null when remix is unavailable', async () => {
+    store.seed({ id: LISTING_ID });
+    await expect(handlers['dialog:chooseRemix']()).resolves.toBeNull();
+    await expect(handlers['remix:get'](LISTING_ID)).resolves.toBeNull();
+  });
+});
+
+describe('analysis job checkpoint', () => {
+  it('records the folder and kind on the queued job', async () => {
+    store.seed({ id: LISTING_ID });
+    const folder = await makeVideoFolder('checkpoint');
+    await handlers['analysis:start']({ listingId: LISTING_ID, folder });
+
+    const job = [...runner.jobs.values()][0];
+    expect(job).toMatchObject({ kind: 'analysis', checkpoint: folder });
+  });
+
+  it('cancels the job when preparation fails after enqueue', async () => {
+    store.seed({ id: LISTING_ID });
+    const folder = await makeVideoFolder('cancel');
+    pipeline.prepareAnalysis = () => {
+      throw new Error('binding failed');
+    };
+    await expect(
+      handlers['analysis:start']({ listingId: LISTING_ID, folder }),
+    ).rejects.toMatchObject({ code: 'E_PIPELINE' });
+
+    const job = [...runner.jobs.values()][0];
+    expect(job?.status).toBe('cancelled');
+  });
+});
+
+describe('render inspection', () => {
+  it('inspects an export inside the data folder and sanitises the result', async () => {
+    const review = new FakeReview();
+    const local = createHandlers({
+      store, runner, pipeline, settings, chat, review, dataDir: tempDir,
+    });
+    store.seed({ id: LISTING_ID });
+    const file = join(tempDir, 'export.mp4');
+
+    const result = await local['review:inspect']({
+      file,
+      facts: { price: 'AED 1,850,000' },
+    });
+    expect(result).toMatchObject({ verdict: 'retry', score: 0.62, costUsd: 0.0021 });
+    expect(result.issues[0]).toMatchObject({ severity: 'medium', atSec: 31.2 });
+    expect(review.calls).toHaveLength(1);
+    expect(review.calls[0]?.file).toBe(file);
+  });
+
+  it('refuses files outside the data folder or not mp4', async () => {
+    const review = new FakeReview();
+    const local = createHandlers({
+      store, runner, pipeline, settings, chat, review, dataDir: tempDir,
+    });
+    store.seed({ id: LISTING_ID });
+
+    await expect(
+      local['review:inspect']({ file: 'C:/Windows/notepad.exe' }),
+    ).rejects.toMatchObject({ code: 'E_INVALID_INPUT' });
+    await expect(
+      local['review:inspect']({ file: join(tempDir, 'notes.txt') }),
+    ).rejects.toMatchObject({ code: 'E_INVALID_INPUT' });
+  });
+
+  it('refuses when inspection is unavailable', async () => {
+    store.seed({ id: LISTING_ID });
+    await expect(
+      handlers['review:inspect']({ file: join(tempDir, 'export.mp4') }),
+    ).rejects.toMatchObject({ code: 'E_PIPELINE' });
   });
 });

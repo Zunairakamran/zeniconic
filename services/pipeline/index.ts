@@ -9,3 +9,4 @@
 export * from './service';
 export * from './ffmpeg-overlays';
 export * from './marketing';
+export * from './segment-cache';

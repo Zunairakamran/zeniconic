@@ -20,6 +20,17 @@ export interface TagShotOptions {
   /** Prompt version, stored in the index and mixed into the cache key. */
   promptVersion: string;
   cache?: TaggingCache;
+  /**
+   * Called once for every model call that returned a response, with the net
+   * cost the provider reported (`ChatResponse.costUsd`). A repair attempt is a
+   * second call and reports a second time, because it is billed a second time.
+   *
+   * A call that never produced a response — transport, auth, budget, or a
+   * reply the client itself rejected as invalid JSON — reports nothing, since
+   * there is no provider figure to pass on. A response that is merely invalid
+   * for us (bad JSON, schema violation) was still billed and is still reported.
+   */
+  onCost?: (usd: number) => void;
 }
 
 /** One repair attempt, then fail closed. */
@@ -84,7 +95,8 @@ function repairMessage(issues: string[]): ChatMessage {
  * schema-constrained reply, validates it (schema plus cross-field invariants)
  * and retries once with the issue list when the reply is invalid. Network,
  * authentication and budget errors are not masked as `E_TAGS`; only an invalid
- * reply is.
+ * reply is. Every call that returned a response reports its cost through
+ * `opts.onCost`, cache hits included in the "no call, no cost" sense.
  */
 export async function tagShot(input: TagShotInput, opts: TagShotOptions): Promise<ShotTags> {
   if (!Number.isFinite(input.durationSec) || input.durationSec <= 0) {
@@ -117,6 +129,9 @@ export async function tagShot(input: TagShotInput, opts: TagShotOptions): Promis
         temperature: 0,
         maxTokens: MAX_OUTPUT_TOKENS,
       });
+      // The provider billed this call whatever we make of the reply, so the
+      // figure is reported before the reply is parsed and validated.
+      if (Number.isFinite(response.costUsd)) opts.onCost?.(response.costUsd);
       payload = response.json ?? (JSON.parse(response.text) as unknown);
     } catch (error) {
       if (!isRecoverableReply(error)) throw error;

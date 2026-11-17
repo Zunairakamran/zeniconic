@@ -1,4 +1,4 @@
-import type { ChatContentPart, ChatRequest } from './types';
+import type { ChatContentPart, ChatMessage, ChatRequest, ChatRole, ToolCall } from './types';
 
 export interface TextPart {
   type: 'text';
@@ -6,9 +6,21 @@ export interface TextPart {
   cache_control?: { type: 'ephemeral' };
 }
 
+export interface WireToolCall {
+  id: string;
+  type: 'function';
+  function: {
+    name: string;
+    arguments: string;
+  };
+}
+
 export interface WireMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: ChatRole;
   content: string | TextPart[] | ChatContentPart[];
+  tool_calls?: WireToolCall[];
+  tool_call_id?: string;
+  name?: string;
 }
 
 const SCHEMA_PREAMBLE =
@@ -43,7 +55,8 @@ function schemaBlock(schema: object): string {
 /**
  * The stable prefix: instructions first, then the schema. Nothing variable is
  * allowed in here — the whole point is that the provider can cache these bytes
- * across calls in the same stage.
+ * across calls in the same stage. Tool schemas ride in the native `tools` field
+ * (which the provider also caches), so they are not duplicated here.
  */
 function stablePrefix(req: ChatRequest): string {
   return [instructionsOf(req), req.jsonSchema === undefined ? '' : schemaBlock(req.jsonSchema)]
@@ -68,15 +81,46 @@ function anthropicSystemParts(req: ChatRequest): TextPart[] {
   return parts;
 }
 
+function wireToolCalls(calls: ToolCall[]): WireToolCall[] {
+  return calls.map((call) => ({
+    id: call.id,
+    type: 'function',
+    function: { name: call.name, arguments: call.arguments },
+  }));
+}
+
+/**
+ * Tool turns carry `tool_call_id` (and optionally the tool name) beside their
+ * content. Content is flattened to text: providers do not accept image parts
+ * in a tool result, and silently dropping them would hide the problem.
+ */
+function wireToolMessage(message: ChatMessage): WireMessage {
+  const wire: WireMessage = { role: 'tool', content: textOf(message.content) };
+  if (message.toolCallId !== undefined) wire.tool_call_id = message.toolCallId;
+  if (message.name !== undefined) wire.name = message.name;
+  return wire;
+}
+
+function wireMessage(message: ChatMessage): WireMessage {
+  if (message.role === 'tool') return wireToolMessage(message);
+
+  const wire: WireMessage = { role: message.role, content: message.content };
+  if (message.toolCalls !== undefined && message.toolCalls.length > 0) {
+    wire.tool_calls = wireToolCalls(message.toolCalls);
+  }
+  return wire;
+}
+
 /**
  * Rewrites a request into wire messages with the stable prefix first and the
- * variable content (shot table, user request) last. Consecutive system messages
- * are merged, because a second system turn would break Anthropic's prefix.
+ * variable content (shot table, user request, tool exchange) last. Consecutive
+ * system messages are merged, because a second system turn would break
+ * Anthropic's prefix.
  */
 export function buildWireMessages(req: ChatRequest): WireMessage[] {
   const variable: WireMessage[] = req.messages
     .filter((message) => message.role !== 'system')
-    .map((message) => ({ role: message.role, content: message.content }));
+    .map(wireMessage);
 
   const prefix = stablePrefix(req);
   if (prefix.length === 0) return variable;

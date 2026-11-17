@@ -41,9 +41,13 @@ export {
   DEFAULT_CAPTION_PRESET,
   LEGACY_CAPTION_PRESETS,
   captionCues,
+  captionEntrance,
+  isCaptionAnimation,
   isCaptionPreset,
+  normalizeCaptionAnimation,
   resolveCaptionStyle,
   splitLongCues,
+  withReducedMotion,
 } from './captions';
 export type {
   CaptionAccent,
@@ -52,6 +56,8 @@ export type {
   CaptionBacking,
   CaptionCase,
   CaptionColourToken,
+  CaptionEntranceOptions,
+  CaptionEntranceState,
   CaptionFont,
   CaptionPosition,
   CaptionPresetId,

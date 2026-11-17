@@ -430,6 +430,34 @@
   color: var(--danger-text);
 }
 
+.shotreview__points,
+.shotreview__defects {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+
+.shotreview__point {
+  padding: 1px 5px;
+  border: var(--border);
+  border-radius: var(--r-sm);
+  font-size: var(--text-2xs);
+  color: var(--ink-70);
+}
+
+.shotreview__defects {
+  font-size: var(--text-2xs);
+  color: var(--danger-text);
+}
+
+.shotreview__defects li::before {
+  content: 'Defect: ';
+  color: var(--ink-45);
+}
+
 .shotreview__empty {
   margin-top: var(--s-6);
 }

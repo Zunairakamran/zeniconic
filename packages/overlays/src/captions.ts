@@ -15,7 +15,11 @@ import { toCues } from '../../captions/src/cues';
 import { isRtl } from '../../captions/src/language';
 import { layoutCueLines } from '../../captions/src/layout';
 import type { Cue } from '../../captions/src/types';
-import type { CaptionStyle as LegacyCaptionStyle, Edl } from '../../edl/src/types';
+import type {
+  CaptionStyle as LegacyCaptionStyle,
+  Edl,
+  TextAnimation,
+} from '../../edl/src/types';
 import { canvasDurationSec, framesFor } from './timeline';
 import type { CaptionCueFrames } from './types';
 
@@ -39,7 +43,27 @@ export type CaptionAccent = 'none' | 'first_word' | 'last_word' | 'longest_word'
 
 export type CaptionBacking = 'none' | 'soft_shadow' | 'gradient_scrim' | 'solid_plate';
 
-export type CaptionAnimation = 'pop' | 'fade' | 'word_stagger';
+/**
+ * The EDL's `captions.animation` union, plus the legacy `word_stagger` alias
+ * that shipped before the EDL gained `word_by_word`. `word_stagger` renders
+ * exactly like `word_by_word`, so old EDLs and old style objects keep working.
+ */
+export type CaptionAnimation = TextAnimation | 'word_stagger';
+
+/** Every animation the caption layer knows how to draw. */
+export const CAPTION_ANIMATIONS: readonly CaptionAnimation[] = Object.freeze([
+  'none',
+  'fade',
+  'rise',
+  'slide_in',
+  'pop',
+  'typewriter',
+  'word_by_word',
+  'tracking_in',
+  'blur_in',
+  'scale_in',
+  'word_stagger',
+]);
 
 /**
  * The full caption style object. Defaults are Social Bold, which is what the
@@ -148,6 +172,26 @@ export function isCaptionPreset(value: string): value is CaptionPresetId {
   return Object.prototype.hasOwnProperty.call(CAPTION_PRESETS, value);
 }
 
+const CAPTION_ANIMATION_SET: ReadonlySet<string> = new Set<string>(CAPTION_ANIMATIONS);
+
+export function isCaptionAnimation(value: unknown): value is CaptionAnimation {
+  return typeof value === 'string' && CAPTION_ANIMATION_SET.has(value);
+}
+
+/**
+ * Normalises any animation string, including one a hand-edited EDL invented.
+ *
+ * `word_stagger` is the pre-EDL alias for `word_by_word` and stays valid as an
+ * identity; anything unknown falls back (default `fade`, the least surprising
+ * entrance, so a typo never produces a cut with no caption at all).
+ */
+export function normalizeCaptionAnimation(
+  value: unknown,
+  fallback: CaptionAnimation = 'fade',
+): CaptionAnimation {
+  return isCaptionAnimation(value) ? value : fallback;
+}
+
 function isLegacyStyle(value: string): value is LegacyCaptionStyle {
   return Object.prototype.hasOwnProperty.call(LEGACY_CAPTION_PRESETS, value);
 }
@@ -189,7 +233,7 @@ export function resolveCaptionStyle(input?: CaptionStyleInput): CaptionStyle {
     accentColour: input.accentColour ?? base.accentColour,
     accent: input.accent ?? base.accent,
     backing: input.backing ?? base.backing,
-    animation: input.animation ?? base.animation,
+    animation: normalizeCaptionAnimation(input.animation, base.animation),
     maxLines: clamp(input.maxLines ?? base.maxLines, 1, 3, base.maxLines),
     maxCharsPerLine: clamp(
       input.maxCharsPerLine ?? base.maxCharsPerLine,
@@ -197,6 +241,275 @@ export function resolveCaptionStyle(input?: CaptionStyleInput): CaptionStyle {
       40,
       base.maxCharsPerLine,
     ),
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Entrance motion (the values the Remotion caption layer draws)
+// ---------------------------------------------------------------------------
+
+/**
+ * Entrance lengths, in seconds so a 60 fps take is not twice as slow as the
+ * same cut at 30 fps. At 30 fps the fade/rise/pop/slide entrance is 8 frames,
+ * which is what the renderer drew before this table existed.
+ */
+export const CAPTION_ENTRANCE_SEC = 8 / 30;
+/** `tracking_in` settles over 10 frames at 30 fps. */
+export const CAPTION_TRACKING_SEC = 10 / 30;
+/** `blur_in` clears over 10 frames at 30 fps. */
+export const CAPTION_BLUR_SEC = 10 / 30;
+/** `scale_in` settles over 12 frames at 30 fps. */
+export const CAPTION_SCALE_IN_SEC = 12 / 30;
+/** `typewriter` reveals about 20 characters per second. */
+export const CAPTION_TYPEWRITER_CHARS_PER_SEC = 20;
+/** The last word of `word_by_word` starts no later than 1.5 frames at 30 fps. */
+export const CAPTION_WORD_STAGGER_MAX_SEC = 1.5 / 30;
+
+/** Resting tracking, matching the renderer's `CAPTION_TRACKING` token. */
+export const CAPTION_TRACKING_REST_EM = -0.02;
+const TRACKING_START_EM = 0.32;
+const BLUR_START_PX = 12;
+const SCALE_IN_START = 1.18;
+const POP_START_SCALE = 0.88;
+const POP_RISE_PX = 4;
+const RISE_PX = 6;
+/**
+ * `slide_in` pushes in horizontally from the safe edge: 32 px at a 1080-wide
+ * canvas, further than `rise` travels vertically. The value is a magnitude;
+ * the caption layer applies the sign because only it knows the reading edge
+ * (left first for LTR, right first for RTL).
+ */
+const SLIDE_X_PX = 32;
+
+/** Pixels the motion is authored at; `options.scale` rescales it per canvas. */
+export const CAPTION_MOTION_BASE_WIDTH = 1080;
+
+/** The numbers the caption layer draws for one cue at one frame. */
+export interface CaptionEntranceState {
+  /** 0..1 */
+  opacity: number;
+  /**
+   * How far the type starts off its resting position horizontally, in canvas
+   * pixels; 0 once settled, and 0 for every animation except `slide_in`. The
+   * value is unsigned — the caption layer pushes in from the script's leading
+   * edge (left for LTR, right for RTL).
+   */
+  translateX: number;
+  /** Pixels *down* from the resting position; 0 once settled. */
+  translateY: number;
+  /** 1 at rest. */
+  scale: number;
+  /** Em tracking for the type; the rest value is `CAPTION_TRACKING_REST_EM`. */
+  letterSpacingEm: number;
+  /** CSS blur radius in pixels, already scaled to the canvas; 0 when sharp. */
+  blurPx: number;
+  /** `typewriter` only: how many characters of the cue are drawn (0..charCount). */
+  visibleChars?: number;
+  /** `word_by_word`/`word_stagger` only: how many words are drawn (0..wordCount). */
+  visibleWords?: number;
+}
+
+export interface CaptionEntranceOptions {
+  /** Canvas width / 1080. Defaults to 1. */
+  scale?: number;
+  /** Words in the cue, for the `word_by_word` stagger. Defaults to 4. */
+  wordCount?: number;
+  /** Characters in the cue, for the `typewriter` reveal. Defaults to 24. */
+  charCount?: number;
+  /**
+   * Honour a reduced-motion preference. Remotion has no media query, so the
+   * composition passes this once it knows the user's setting; default false.
+   * Reduced motion keeps the opacity ramp and the progressive reveals (text
+   * appearing is not vestibular motion) and drops every spatial move: no rise,
+   * slide, scale, blur or tracking.
+   */
+  reduceMotion?: boolean;
+}
+
+function clamp01(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.min(1, Math.max(0, value));
+}
+
+/** Ease-out cubic: 0 at 0, exactly 1 at 1. */
+function easeOutCubic(progress: number): number {
+  const p = clamp01(progress);
+  return 1 - (1 - p) ** 3;
+}
+
+/** Ease-out back, for the pop overshoot. Exactly 1 at 1. */
+function easeOutBack(progress: number): number {
+  const p = clamp01(progress);
+  const c1 = 1.70158;
+  const c3 = c1 + 1;
+  return 1 + c3 * (p - 1) ** 3 + c1 * (p - 1) ** 2;
+}
+
+function round4(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  const rounded = Math.round(value * 10_000) / 10_000;
+  return Object.is(rounded, -0) ? 0 : rounded;
+}
+
+/** A positive integer count, with a fallback for a missing or broken option. */
+function countOr(value: number | undefined, fallback: number): number {
+  const count = Number.isFinite(value) ? Math.floor(value as number) : fallback;
+  return Math.max(1, count);
+}
+
+function makeMotionState(
+  fields: Partial<CaptionEntranceState> & Pick<CaptionEntranceState, 'opacity'>,
+): CaptionEntranceState {
+  return {
+    opacity: round4(clamp01(fields.opacity)),
+    translateX: round4(Math.max(0, fields.translateX ?? 0)),
+    translateY: round4(Math.max(0, fields.translateY ?? 0)),
+    scale: round4(fields.scale ?? 1),
+    letterSpacingEm: round4(fields.letterSpacingEm ?? CAPTION_TRACKING_REST_EM),
+    blurPx: round4(Math.max(0, fields.blurPx ?? 0)),
+    ...(fields.visibleChars === undefined ? {} : { visibleChars: fields.visibleChars }),
+    ...(fields.visibleWords === undefined ? {} : { visibleWords: fields.visibleWords }),
+  };
+}
+
+/**
+ * The entrance for one cue, as data.
+ *
+ * `frame` is **cue-relative** (composition frame minus the cue's start frame).
+ * Every mode is defined before the cue (`frame < 0` returns its starting pose,
+ * and 0 visible characters/words) and after its window (the settled pose).
+ * Output is deterministic, clamped and rounded so snapshots do not drift.
+ *
+ * Timing, all seconds converted with `fps` (so motion length is frame-rate
+ * independent; at 30 fps the numbers below are the frame counts in brackets):
+ *
+ * | animation              | window                 | what moves                                  |
+ * |------------------------|------------------------|---------------------------------------------|
+ * | `none`                 | instant                | nothing: opacity 1 at frame 0               |
+ * | `fade`                 | 0.267 s [8f]           | opacity only                                |
+ * | `rise`                 | 0.267 s [8f]           | opacity + 6 px vertical rise from the safe edge |
+ * | `slide_in`             | 0.267 s [8f]           | opacity + 32 px horizontal push from the safe edge |
+ * | `pop`                  | 0.267 s [8f]           | opacity + 0.88→1 scale with a small overshoot |
+ * | `typewriter`           | chars / 20 per second  | one character per ~1.5 frames, no reflow    |
+ * | `word_by_word`         | words × stagger        | one word per min(1.5f, 8f/words)            |
+ * | `tracking_in`          | 0.333 s [10f]          | 0.32em → -0.02em tracking + opacity         |
+ * | `blur_in`              | 0.333 s [10f]          | 12 px → 0 blur + opacity                    |
+ * | `scale_in`             | 0.4 s [12f]            | 1.18 → 1 scale + opacity                    |
+ *
+ * `word_stagger` is accepted as an alias of `word_by_word`. An unknown value
+ * falls back to `fade`; see `normalizeCaptionAnimation`.
+ */
+export function captionEntrance(
+  animation: CaptionAnimation | string | null | undefined,
+  frame: number,
+  fps: number,
+  options: CaptionEntranceOptions = {},
+): CaptionEntranceState {
+  // `word_stagger` is the pre-EDL alias: it draws exactly as `word_by_word`.
+  const normalized = normalizeCaptionAnimation(animation);
+  const resolved: TextAnimation = normalized === 'word_stagger' ? 'word_by_word' : normalized;
+  const safeFps = Number.isFinite(fps) && fps > 0 ? fps : 30;
+  const scale =
+    Number.isFinite(options.scale) && (options.scale ?? 0) > 0 ? (options.scale as number) : 1;
+  const words = countOr(options.wordCount, 4);
+  const chars = countOr(options.charCount, 24);
+  const beforeCue = Number.isFinite(frame) && frame < 0;
+  const seconds = (Number.isFinite(frame) ? frame : 0) / safeFps;
+  const entrance = easeOutCubic(seconds / CAPTION_ENTRANCE_SEC);
+
+  const built = ((): CaptionEntranceState => {
+    switch (resolved) {
+      case 'none':
+        return makeMotionState({ opacity: 1 });
+
+      case 'fade':
+        return makeMotionState({ opacity: entrance });
+
+      case 'rise':
+        return makeMotionState({
+          opacity: entrance,
+          translateY: (1 - entrance) * RISE_PX * scale,
+        });
+
+      case 'slide_in':
+        return makeMotionState({
+          opacity: entrance,
+          translateX: (1 - entrance) * SLIDE_X_PX * scale,
+        });
+
+      case 'pop': {
+        const popped = easeOutBack(clamp01(seconds / CAPTION_ENTRANCE_SEC));
+        return makeMotionState({
+          opacity: entrance,
+          translateY: (1 - entrance) * POP_RISE_PX * scale,
+          scale: Math.min(1.02, POP_START_SCALE + (1 - POP_START_SCALE) * popped),
+        });
+      }
+
+      case 'typewriter': {
+        if (beforeCue) return makeMotionState({ opacity: 1, visibleChars: 0 });
+        const revealed = Math.floor(seconds * CAPTION_TYPEWRITER_CHARS_PER_SEC) + 1;
+        return makeMotionState({
+          opacity: 1,
+          visibleChars: Math.min(chars, Math.max(1, revealed)),
+        });
+      }
+
+      case 'word_by_word': {
+        if (beforeCue) return makeMotionState({ opacity: 1, visibleWords: 0 });
+        const stagger = Math.min(CAPTION_WORD_STAGGER_MAX_SEC, CAPTION_ENTRANCE_SEC / words);
+        const perSecond = stagger > 0 ? 1 / stagger : safeFps;
+        const revealed = Math.floor(seconds * perSecond) + 1;
+        return makeMotionState({
+          opacity: 1,
+          visibleWords: Math.min(words, Math.max(1, revealed)),
+        });
+      }
+
+      case 'tracking_in': {
+        const settled = easeOutCubic(seconds / CAPTION_TRACKING_SEC);
+        return makeMotionState({
+          opacity: entrance,
+          letterSpacingEm:
+            TRACKING_START_EM + (CAPTION_TRACKING_REST_EM - TRACKING_START_EM) * settled,
+        });
+      }
+
+      case 'blur_in':
+        return makeMotionState({
+          opacity: entrance,
+          blurPx: (1 - easeOutCubic(seconds / CAPTION_BLUR_SEC)) * BLUR_START_PX * scale,
+        });
+
+      case 'scale_in': {
+        const settled = easeOutCubic(seconds / CAPTION_SCALE_IN_SEC);
+        return makeMotionState({
+          opacity: entrance,
+          scale: 1 + (SCALE_IN_START - 1) * (1 - settled),
+        });
+      }
+
+      default:
+        return makeMotionState({ opacity: entrance });
+    }
+  })();
+
+  return withReducedMotion(built, options.reduceMotion);
+}
+
+/** Applies `reduceMotion` to a computed state, keeping the text reveals. */
+export function withReducedMotion(
+  state: CaptionEntranceState,
+  reduceMotion: boolean | undefined,
+): CaptionEntranceState {
+  if (!reduceMotion) return state;
+  return {
+    ...state,
+    translateX: 0,
+    translateY: 0,
+    scale: 1,
+    letterSpacingEm: CAPTION_TRACKING_REST_EM,
+    blurPx: 0,
   };
 }
 

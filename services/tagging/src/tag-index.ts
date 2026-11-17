@@ -22,6 +22,13 @@ export interface TagOptions {
   /** Directory for the temporary contact sheets; created if missing. */
   workDir: string;
   onProgress?: (done: number, total: number, shotId: string) => void;
+  /**
+   * Called once per billed model call with the net cost the provider reported.
+   * A shot that needs a repair attempt reports twice; a shot whose call never
+   * returned reports nothing. The run's total lands in
+   * {@link TagReport.costUsd} whether or not this hook is supplied.
+   */
+  onCost?: (usd: number) => void;
 }
 
 export interface TagFailure {
@@ -35,6 +42,13 @@ export interface TagReport {
   /** Shots left without `tags`; the run continues past each of them. */
   failed: number;
   failures: TagFailure[];
+  /**
+   * The provider-reported cost of the run in USD: the sum of every billed
+   * call, repair attempts included. `0` when the client reports no cost. This
+   * is the actual figure; {@link estimateTaggingCost} stays the pre-flight
+   * estimate.
+   */
+  costUsd: number;
 }
 
 export interface TagRun {
@@ -89,6 +103,7 @@ async function tagOne(
         model: options.model,
         promptVersion: options.promptVersion,
         ...(options.cache === undefined ? {} : { cache: options.cache }),
+        ...(options.onCost === undefined ? {} : { onCost: options.onCost }),
       },
     );
   } finally {
@@ -108,7 +123,8 @@ export async function tagIndex(index: FootageIndex, options: TagOptions): Promis
 
 /**
  * `tagIndex` with the run's arithmetic: how many shots were tagged, which ones
- * failed and why. The CLI prints this; the app can persist it in the job log.
+ * failed and why, and what the provider charged. The CLI prints this; the app
+ * can persist it in the job log.
  */
 export async function tagIndexWithReport(
   index: FootageIndex,
@@ -148,6 +164,15 @@ export async function tagIndexWithReport(
   const failures: TagFailure[] = [];
   let done = 0;
   let next = 0;
+  let costUsd = 0;
+
+  // Workers interleave but never inside this handler, so a plain sum is safe.
+  const addCost = (usd: number): void => {
+    if (!Number.isFinite(usd)) return;
+    costUsd += usd;
+    options.onCost?.(usd);
+  };
+  const runOptions: TagOptions = { ...options, onCost: addCost };
 
   const worker = async (): Promise<void> => {
     for (;;) {
@@ -157,7 +182,7 @@ export async function tagIndexWithReport(
       if (job === undefined) return;
 
       try {
-        tags.set(job.shot.id, await tagOne(job, await framesFor(job.file), options));
+        tags.set(job.shot.id, await tagOne(job, await framesFor(job.file), runOptions));
       } catch (error) {
         // One bad sheet must not abort a listing: record it and keep going.
         failures.push({ shotId: job.shot.id, message: messageOf(error) });
@@ -185,6 +210,7 @@ export async function tagIndexWithReport(
       tagged: tags.size,
       failed: failures.length,
       failures,
+      costUsd,
     },
   };
 }

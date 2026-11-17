@@ -77,6 +77,10 @@ export interface VoiceTrackResult {
   audioPath: string;
   captions: VoiceCaption[];
   durationSec: number;
+  /** Which engine actually spoke the bridge lines. */
+  provider: 'studio' | 'local';
+  /** Characters synthesised (presenter audio excluded). */
+  characters: number;
   /** Non-fatal notes, e.g. the studio falling back to the offline voice. */
   warnings: string[];
 }

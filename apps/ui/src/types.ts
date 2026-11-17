@@ -1,4 +1,5 @@
 import type {
+  AgentRunResponse,
   CaptionMode,
   ChatApplyRequest,
   ChatApplyResult,
@@ -20,6 +21,7 @@ export type View =
   | 'chat'
   | 'formats'
   | 'export'
+  | 'remix'
   | 'settings';
 
 export type ListingStatus = 'draft' | 'analysing' | 'ready' | 'exported' | 'failed';
@@ -45,7 +47,7 @@ export interface Listing {
 export interface Variant {
   id: string;
   name: string;
-  look: 'calm' | 'social' | 'walkthrough' | 'editorial';
+  look: 'calm' | 'social' | 'walkthrough' | 'editorial' | 'marketing';
   durationSec: number;
   clipCount: number;
   score: number;
@@ -107,4 +109,13 @@ export interface ScreenProps {
   onChatApply: (input: ChatApplyRequest) => Promise<ChatApplyResult>;
   /** Saved chat versions, newest first. */
   onChatVersions: (listingId: string, variantId: string) => Promise<ChatVersion[]>;
+  /** Re-read the persisted shots after tagging. */
+  onRefreshShots: () => Promise<void>;
+  /** Agentic edit: inspects, plans, edits, commits a version. */
+  onAgentRun: (input: {
+    listingId: string;
+    variantId: string;
+    message: string;
+    autonomy?: 'suggest' | 'ask' | 'auto';
+  }) => Promise<AgentRunResponse>;
 }

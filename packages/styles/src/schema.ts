@@ -29,6 +29,15 @@ export const TRANSITION_TYPES: readonly TransitionType[] = [
   'zoom_blur',
   'luma_wipe',
   'light_leak',
+  'dip_black',
+  'dip_white',
+  'blur',
+  'directional_blur',
+  'push_left',
+  'push_right',
+  'circle',
+  'wipe',
+  'glitch',
 ];
 
 export const OVERLAY_STYLES: readonly OverlayStyle[] = [
@@ -47,6 +56,11 @@ export const OVERLAY_ANIMATIONS: readonly OverlayAnimation[] = [
   'rise',
   'slide_in',
   'count_up',
+  'pop',
+  'typewriter',
+  'tracking_in',
+  'blur_in',
+  'scale_in',
 ];
 
 export const CAPTION_MODES: readonly CaptionMode[] = ['burn', 'sidecar', 'both', 'none'];

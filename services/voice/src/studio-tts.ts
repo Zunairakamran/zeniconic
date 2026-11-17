@@ -26,6 +26,20 @@ import { readWavMono16, wavIsIntact, writeWavMono16 } from './wav';
 
 export const STUDIO_SPEECH_ENDPOINT = 'https://openrouter.ai/api/v1/audio/speech';
 export const STUDIO_MODEL_ID = 'elevenlabs/eleven-v4';
+/** Gemini TTS is served by the same OpenRouter speech endpoint. */
+export const GEMINI_TTS_PREFIX = 'google/gemini';
+/** Gemini requires raw PCM and its own voice names. */
+export const GEMINI_TTS_SAMPLE_RATE = 24_000;
+export const GEMINI_VOICE_BY_ID: Readonly<Record<string, string>> = Object.freeze({
+  matilda: 'Kore',
+  bella: 'Aoede',
+  alice: 'Leda',
+  sarah: 'Zephyr',
+  jessica: 'Puck',
+  lily: 'Fenrir',
+  daniel: 'Orus',
+  george: 'Charon',
+});
 /** $80 per million characters; used only for a plain-language receipt. */
 export const STUDIO_USD_PER_CHAR = 80 / 1_000_000;
 export const STUDIO_TIMEOUT_MS = 30_000;
@@ -233,12 +247,17 @@ function writeCachedLine(file: string, audio: TtsAudio): void {
 
 export function createStudioEngine(options: StudioEngineOptions): TtsEngine {
   const model = options.model ?? STUDIO_MODEL_ID;
+  const isGemini = model.startsWith(GEMINI_TTS_PREFIX);
   const endpoint = options.endpoint ?? STUDIO_SPEECH_ENDPOINT;
+  // Gemini rejects mp3 and our catalogue voice ids; it wants PCM and its own
+  // voice names. ElevenLabs accepts the catalogue ids and mp3.
+  const responseFormat: 'mp3' | 'pcm' = isGemini ? 'pcm' : (options.responseFormat ?? 'mp3');
+  const pcmSampleRate = options.pcmSampleRate ?? (isGemini ? GEMINI_TTS_SAMPLE_RATE : STUDIO_SAMPLE_RATE);
+  const providerVoice = (voice: string): string =>
+    isGemini ? (GEMINI_VOICE_BY_ID[voice] ?? 'Kore') : voice;
   const fetchImpl = options.fetchImpl ?? fetch;
   const timeoutMs = options.timeoutMs ?? STUDIO_TIMEOUT_MS;
   const retryDelayMs = options.retryDelayMs ?? 750;
-  const responseFormat = options.responseFormat ?? 'mp3';
-  const pcmSampleRate = options.pcmSampleRate ?? STUDIO_SAMPLE_RATE;
   const cacheTag: VoiceCacheTag = { provider: 'studio', model };
 
   const decode = async (bytes: Buffer, contentType: string): Promise<TtsAudio> => {
@@ -284,7 +303,7 @@ export function createStudioEngine(options: StudioEngineOptions): TtsEngine {
       const body = JSON.stringify({
         model,
         input,
-        voice,
+        voice: providerVoice(voice),
         response_format: responseFormat,
       });
 

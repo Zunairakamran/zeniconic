@@ -138,6 +138,29 @@
   margin-left: auto;
 }
 
+.intake-footage {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+  margin-top: 14px;
+  padding: 10px 12px;
+  border: 1px dashed var(--hairline-strong);
+  border-radius: var(--r-sm);
+  background: var(--paper);
+}
+
+.intake-footage__count {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink-70);
+}
+
+.intake-footage .intake-drop__meta {
+  flex: 1 1 220px;
+  margin: 0;
+}
+
 .intake-strip {
   display: grid;
   grid-template-columns: repeat(7, minmax(0, 1fr));

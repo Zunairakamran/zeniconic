@@ -46,6 +46,10 @@ export interface SettingsPort {
   keyStatus(): Promise<KeyStatus>;
   /** Persists the selected studio voice; unknown ids are rejected. */
   setVoice(voiceId: string): Promise<void>;
+  /** Enables/disables vision tagging at the end of analysis. */
+  setTagging(enabled: boolean): Promise<void>;
+  /** Selects the export music bed (a file under the app music folder). */
+  setMusic?(musicTrack: string): Promise<void>;
   /**
    * The decrypted key this machine can use, or `undefined`. This is the only
    * way the rest of the app reaches the secret; it is never logged or returned
@@ -85,6 +89,10 @@ interface SettingsFile {
   version: 1;
   theme: Theme;
   voiceId: string;
+  /** Run the vision pass at the end of analysis. Default false. */
+  tagOnAnalyse: boolean;
+  /** File under `<data>/assets/music` used as the bed; absent = bundled bed. */
+  musicTrack?: string;
 }
 
 interface KeyFile {
@@ -97,6 +105,16 @@ function isTheme(value: unknown): value is Theme {
   return value === 'light' || value === 'dark';
 }
 
+/** A bare file name under the music folder, never a path. */
+export function isMusicFile(value: unknown): value is string {
+  return (
+    typeof value === 'string' &&
+    value.length > 0 &&
+    value.length <= 120 &&
+    /^[A-Za-z0-9][A-Za-z0-9._-]*\.(mp3|m4a|wav)$/i.test(value)
+  );
+}
+
 function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
@@ -105,6 +123,7 @@ const DEFAULT_SETTINGS: SettingsFile = {
   version: 1,
   theme: DEFAULT_THEME,
   voiceId: DEFAULT_VOICE_ID,
+  tagOnAnalyse: false,
 };
 
 /** Forgiving on read; every field falls back independently. */
@@ -119,11 +138,13 @@ async function readSettings(file: string): Promise<SettingsFile> {
   try {
     const parsed: unknown = JSON.parse(raw);
     if (typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed)) {
-      const record = parsed as { theme?: unknown; voiceId?: unknown };
+      const record = parsed as { theme?: unknown; voiceId?: unknown; tagOnAnalyse?: unknown; musicTrack?: unknown };
       return {
         version: 1,
         theme: isTheme(record.theme) ? record.theme : DEFAULT_THEME,
         voiceId: isVoiceId(record.voiceId) ? record.voiceId : DEFAULT_VOICE_ID,
+        tagOnAnalyse: record.tagOnAnalyse === true,
+        ...(isMusicFile(record.musicTrack) ? { musicTrack: record.musicTrack } : {}),
       };
     }
   } catch {
@@ -312,9 +333,25 @@ export function createSettings(options: CreateSettingsOptions): SettingsPort {
         modelConfigured: await configured(),
         theme: stored.theme,
         voiceId: stored.voiceId,
+        tagOnAnalyse: stored.tagOnAnalyse,
+        ...(stored.musicTrack === undefined ? {} : { musicTrack: stored.musicTrack }),
         version,
         spendUsd: spent(),
       };
+    },
+
+    async setMusic(musicTrack: string): Promise<void> {
+      if (!isMusicFile(musicTrack)) {
+        throw new RangeError('Choose a music file from the app music folder.');
+      }
+      await updateSettings({ musicTrack });
+    },
+
+    async setTagging(enabled: boolean): Promise<void> {
+      if (typeof enabled !== 'boolean') {
+        throw new RangeError('Tagging must be enabled or disabled.');
+      }
+      await updateSettings({ tagOnAnalyse: enabled });
     },
 
     async setTheme(theme: Theme): Promise<void> {

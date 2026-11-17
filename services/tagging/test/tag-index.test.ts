@@ -2,7 +2,7 @@ import { mkdtempSync, readFileSync, readdirSync, rmSync, writeFileSync } from 'n
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ChatClient, ChatRequest } from '@zeniconic/ai';
+import type { ChatClient, ChatRequest, ChatResponse } from '@zeniconic/ai';
 import type { ShotTags } from '../../../packages/tagging/src/index';
 import type { FootageIndex, IndexedShot } from '../../pipeline/indexer';
 import { tagIndex, tagIndexWithReport } from '../src/tag-index';
@@ -75,6 +75,11 @@ function makeIndex(shotCounts: number[]): FootageIndex {
 interface MockBehaviour {
   /** Return a payload, or throw by returning an Error. */
   reply?: (call: number, request: ChatRequest) => unknown;
+  /**
+   * Billed cost for one call. Defaults to 0.000196; return `undefined` to act
+   * like a client that reports no cost for that call.
+   */
+  costUsd?: (call: number) => number | undefined;
   delayMs?: number;
   onActive?: (active: number) => void;
 }
@@ -99,15 +104,16 @@ function mockClient(behaviour: MockBehaviour = {}): {
         }
         const payload = behaviour.reply === undefined ? TAGS : behaviour.reply(call, request);
         if (payload instanceof Error) throw payload;
+        const billed = behaviour.costUsd === undefined ? 0.000196 : behaviour.costUsd(call);
         return {
           text: JSON.stringify(payload),
           json: payload,
           usage: { promptTokens: 1200, completionTokens: 180 },
-          costUsd: 0.000196,
+          ...(billed === undefined ? {} : { costUsd: billed }),
           model: request.model,
           cachedTokens: 0,
           cacheDiscountUsd: 0,
-        };
+        } as ChatResponse;
       } finally {
         active -= 1;
       }
@@ -303,6 +309,95 @@ describe('tagIndex — failures', () => {
     const { client } = mockClient();
 
     await expect(tagIndex(index, options(client, 0))).rejects.toBeInstanceOf(RangeError);
+  });
+});
+
+describe('tagIndex — reported cost', () => {
+  const PER_CALL = 0.000196;
+
+  it('sums the provider-reported cost across every shot', async () => {
+    const index = makeIndex([3]);
+    const { client } = mockClient();
+    const reported: number[] = [];
+
+    const result = await tagIndexWithReport(index, {
+      ...options(client, 1),
+      onCost: (usd) => reported.push(usd),
+    });
+
+    expect(result.report.tagged).toBe(3);
+    expect(result.report.costUsd).toBeCloseTo(3 * PER_CALL, 10);
+    expect(reported).toHaveLength(3);
+    expect(reported.every((usd) => usd === PER_CALL)).toBe(true);
+  });
+
+  it('counts the repair attempt as a second billed call', async () => {
+    const index = makeIndex([1]);
+    const { client, calls } = mockClient({
+      reply: (call) => (call === 1 ? { ...TAGS, room: 'garage' } : TAGS),
+    });
+    const reported: number[] = [];
+
+    const result = await tagIndexWithReport(index, {
+      ...options(client, 1),
+      onCost: (usd) => reported.push(usd),
+    });
+
+    expect(calls).toHaveLength(2);
+    expect(reported).toHaveLength(2);
+    expect(result.report.costUsd).toBeCloseTo(2 * PER_CALL, 10);
+  });
+
+  it('adds nothing for a shot whose call never returned', async () => {
+    const index = makeIndex([3]);
+    const { client } = mockClient({
+      reply: (call) =>
+        call === 2 ? Object.assign(new Error('invalid key'), { code: 'E_AUTH' }) : TAGS,
+    });
+
+    const result = await tagIndexWithReport(index, options(client, 1));
+
+    expect(result.report).toMatchObject({ total: 3, tagged: 2, failed: 1 });
+    expect(result.report.costUsd).toBeCloseTo(2 * PER_CALL, 10);
+  });
+
+  it('stays at zero when the client reports zero or no cost at all', async () => {
+    const zero = makeIndex([2]);
+    const zeroRun = await tagIndexWithReport(
+      zero,
+      options(mockClient({ costUsd: () => 0 }).client, 1),
+    );
+
+    const silent = makeIndex([2]);
+    const silentRun = await tagIndexWithReport(
+      silent,
+      options(mockClient({ costUsd: () => undefined }).client, 1),
+    );
+
+    expect(zeroRun.report.tagged).toBe(2);
+    expect(zeroRun.report.costUsd).toBe(0);
+    expect(silentRun.report.tagged).toBe(2);
+    expect(silentRun.report.costUsd).toBe(0);
+  });
+
+  it('reports zero and no calls for an empty index', async () => {
+    const { client, calls } = mockClient();
+
+    const result = await tagIndexWithReport(makeIndex([]), options(client, 1));
+
+    expect(result.report).toMatchObject({ total: 0, tagged: 0, failed: 0, costUsd: 0 });
+    expect(calls).toHaveLength(0);
+  });
+
+  it('propagates onCost through tagIndex, which has no report', async () => {
+    const index = makeIndex([2]);
+    const { client } = mockClient();
+    const reported: number[] = [];
+
+    await tagIndex(index, { ...options(client, 1), onCost: (usd) => reported.push(usd) });
+
+    expect(reported).toHaveLength(2);
+    expect(reported.reduce((sum, usd) => sum + usd, 0)).toBeCloseTo(2 * PER_CALL, 10);
   });
 });
 

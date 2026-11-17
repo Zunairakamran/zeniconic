@@ -325,3 +325,25 @@ describe('JobRunner', () => {
     expect(calls).toBe(1);
   });
 });
+
+describe('job checkpoints', () => {
+  it('keeps the kind and checkpoint and persists them', async () => {
+    const executor = recordingExecutor();
+    const puts: JobRecord[] = [];
+    const store = {
+      list: async () => [] as JobRecord[],
+      put: async (job: JobRecord) => {
+        puts.push(structuredClone(job));
+      },
+    };
+    const runner = new JobRunner({ executor, now: makeClock(), store });
+    const job = runner.enqueue(LISTING, { kind: 'analysis', checkpoint: 'C:/footage' });
+    expect(job).toMatchObject({ kind: 'analysis', checkpoint: 'C:/footage' });
+    await runner.flush();
+    expect(puts.at(-1)).toMatchObject({ kind: 'analysis', checkpoint: 'C:/footage' });
+
+    await runner.setCheckpoint(job.id, 'C:/other-footage');
+    await runner.flush();
+    expect(puts.at(-1)?.checkpoint).toBe('C:/other-footage');
+  });
+});

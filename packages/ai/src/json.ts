@@ -56,6 +56,21 @@ function stripCodeFence(text: string): string {
 }
 
 /**
+ * Validates a value against JSON Schema 2020-12 and throws `E_JSON` with up to
+ * three issue paths. Shared by structured replies and tool arguments so both
+ * report failures the same way.
+ */
+export function assertMatchesSchema(value: unknown, schema: object, label: string): void {
+  const validate = compile(schema);
+  if (validate(value)) return;
+
+  const issues = (validate.errors ?? []).slice(0, 3).map(issuePath);
+  throw new AiError('E_JSON', `${label} does not match the JSON schema: ${issues.join('; ')}`, {
+    issues,
+  });
+}
+
+/**
  * Parses a model reply, optionally validating it against JSON Schema 2020-12.
  * Failures are `E_JSON` and carry up to three issue paths so the caller can
  * repair the reply instead of retrying blindly.
@@ -72,9 +87,6 @@ export function parseJsonReply(text: string, schema?: object): unknown {
 
   if (schema === undefined) return parsed;
 
-  const validate = compile(schema);
-  if (validate(parsed)) return parsed;
-
-  const issues = (validate.errors ?? []).slice(0, 3).map(issuePath);
-  throw new AiError('E_JSON', `Reply does not match the JSON schema: ${issues.join('; ')}`, { issues });
+  assertMatchesSchema(parsed, schema, 'Reply');
+  return parsed;
 }

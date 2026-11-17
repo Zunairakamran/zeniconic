@@ -264,12 +264,23 @@ function roomRank(rooms: readonly Room[], room: Room): number {
 /**
  * `validateEdl` treats a forward jump inside one source as an unmarked gap.
  * Avoid cutting from an early timecode of a file to a later one back to back.
+ *
+ * The comparison is against the *planned* out point, not the candidate window:
+ * a clip trimmed to fit its beat ends earlier than its shot does, and the
+ * validator (and the viewer) sees only the planned end. Using the window end
+ * here let a trimmed clip be followed by a later timecode of the same file,
+ * which produced `E_CLIP_GAP` on real footage with several shots per file.
  */
-function canFollow(previous: Candidate | undefined, next: Candidate): boolean {
+function canFollow(
+  previous: Candidate | undefined,
+  previousOutSec: number | undefined,
+  next: Candidate,
+): boolean {
   if (previous === undefined) return true;
   const sameSource = previous.sourceId === next.sourceId || previous.src === next.src;
   if (!sameSource) return true;
-  return next.inSec - previous.outSec <= 0.001;
+  const out = previousOutSec ?? previous.outSec;
+  return next.inSec <= out + EPS;
 }
 
 function makePool(candidates: readonly Candidate[]): PoolEntry[] {
@@ -569,6 +580,15 @@ function sortForSlot(
 }
 
 /**
+ * The clip already placed, with the timeline end the validator will see.
+ * `outSec` is `inSec + durationSec`, not the candidate's window end.
+ */
+interface PlacedClip {
+  entry: PoolEntry;
+  outSec: number;
+}
+
+/**
  * Greedy, deterministic assignment for one beat. A slot only accepts a shot
  * that can carry its duration *and* the transition handle it must lend, so the
  * assembled film can never come up short.
@@ -582,7 +602,7 @@ function assignBeat(
   slots: readonly Slot[],
   pool: readonly PoolEntry[],
   used: ReadonlySet<string>,
-  previous: PoolEntry | undefined,
+  previous: PlacedClip | undefined,
   options: { forcedFirst?: PoolEntry; reservedEntryId?: string } = {},
 ): Assignment[] | undefined {
   const taken = new Set(used);
@@ -594,7 +614,7 @@ function assignBeat(
     const fits = (entry: PoolEntry): boolean =>
       !taken.has(entry.candidate.shotId) &&
       entry.available + EPS >= required &&
-      canFollow(last?.candidate, entry.candidate);
+      canFollow(last?.entry.candidate, last?.outSec, entry.candidate);
 
     const forceFirst = result.length === 0 && options.forcedFirst !== undefined;
 
@@ -609,11 +629,14 @@ function assignBeat(
       eligible = eligible.filter((entry) => entry.candidate.shotId !== options.reservedEntryId);
     }
 
-    const chosen = sortForSlot(eligible, slot, last, slot.beat.id === 'hook')[0];
+    const chosen = sortForSlot(eligible, slot, last?.entry, slot.beat.id === 'hook')[0];
     if (chosen === undefined) return undefined;
     taken.add(chosen.candidate.shotId);
     result.push({ slot, entry: chosen });
-    last = chosen;
+    last = {
+      entry: chosen,
+      outSec: roundTime(chosen.candidate.inSec + slot.durationSec),
+    };
   }
 
   return result;
@@ -629,7 +652,7 @@ function layoutBeat(
   boundaries: readonly number[],
   pool: readonly PoolEntry[],
   used: ReadonlySet<string>,
-  previous: PoolEntry | undefined,
+  previous: PlacedClip | undefined,
   options: { forcedFirst?: PoolEntry; reservedEntryId?: string } = {},
 ): Assignment[] | undefined {
   const start = boundaries[beatIndex] ?? 0;
@@ -917,7 +940,7 @@ export function planMarketing(request: PlanRequest): Edl {
   const boundaries = marketingBoundaries(request.music.beatGrid);
   const assignments: Assignment[] = [];
   const used = new Set<string>();
-  let previous: PoolEntry | undefined;
+  let previous: PlacedClip | undefined;
 
   // The hook is chosen up front, never by the per-slot greedy pass, so a detail
   // room can never win slot 0 on a high score.
@@ -955,7 +978,13 @@ export function planMarketing(request: PlanRequest): Edl {
       used.add(entry.entry.candidate.shotId);
       assignments.push(entry);
     }
-    previous = assignment[assignment.length - 1]?.entry;
+    const last = assignment[assignment.length - 1];
+    if (last !== undefined) {
+      previous = {
+        entry: last.entry,
+        outSec: roundTime(last.entry.candidate.inSec + last.slot.durationSec),
+      };
+    }
   }
 
   // Defensive: a detail room at slot 0 is the exact fault this sheet forbids.

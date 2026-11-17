@@ -1,41 +1,71 @@
 {
-  "pinnedAt": "2026-11-15",
-  "pricesCheckedAt": "2026-11-15",
+  "pinnedAt": "2026-11-17",
+  "pricesCheckedAt": "2026-11-17",
   "currency": "USD",
   "units": "per million tokens unless noted",
   "roles": {
-    "tagging": {
-      "model": "google/gemini-3.8-flash",
-      "input": 0.825,
-      "output": 4.125,
-      "inputModalities": ["image", "video", "audio", "file", "text"],
-      "why": "Cheapest model that accepts a contact sheet and the voiceover audio in one call."
+    "agent": {
+      "model": "deepseek/deepseek-v4.1-flash",
+      "candidates": ["deepseek/deepseek-v4.1-flash-1017", "openai/gpt-6-astra"],
+      "input": 0.14,
+      "output": 0.42,
+      "capabilities": { "tools": true, "json": true, "vision": true, "video": false },
+      "inputModalities": ["text", "image"],
+      "variant": "nitro",
+      "why": "Cheap, fast tool-caller with image input; the orchestrator's default brain. Escalates to gpt-6-astra for hard creative plans."
     },
     "planning": {
       "model": "openai/gpt-6-astra",
+      "candidates": ["deepseek/deepseek-v4.1-flash"],
       "input": 10.0,
       "output": 50.0,
+      "capabilities": { "tools": true, "json": true, "vision": true },
       "inputModalities": ["text", "image"],
-      "why": "Tool calling and judgement for shot selection and the refine chat."
+      "variant": "nitro",
+      "why": "Tool calling and judgement for shot selection and the refine chat when the cheap agent escalates."
+    },
+    "tagging": {
+      "model": "perceptron/perceptron-mk1.5",
+      "candidates": ["google/gemini-3.8-flash", "google/gemini-4-hydrogen"],
+      "input": 0.15,
+      "output": 1.5,
+      "capabilities": { "tools": true, "json": true, "vision": true, "video": true, "audio": true },
+      "inputModalities": ["text", "image", "video", "audio"],
+      "variant": "auto",
+      "why": "Temporal video understanding of contact sheets and short slices; cheapest model that accepts video, image and audio in one call."
     },
     "review": {
-      "model": "google/gemini-4-carbon",
-      "input": 2.0,
-      "output": 10.0,
-      "inputModalities": ["image", "video", "text"],
-      "why": "Native video input for scoring the rendered draft."
+      "model": "google/gemini-4-hydrogen",
+      "candidates": ["google/gemini-4-carbon", "google/gemini-3.8-flash"],
+      "input": 1.5,
+      "output": 7.5,
+      "capabilities": { "tools": true, "json": true, "vision": true, "video": true, "audio": true },
+      "inputModalities": ["text", "image", "video", "audio", "file"],
+      "variant": "auto",
+      "why": "Independent visual and creative review of sampled frames and the rendered draft."
     },
     "music": {
       "model": "google/lyria-3-pro-preview",
+      "candidates": ["google/lyria-3-clip-preview"],
       "pricing": "metered per generated track",
-      "why": "Music beds for the bank; generated once, reused with cached beat grids."
+      "capabilities": { "audio_out": true },
+      "why": "Background beds generated once into the local bank, reused with cached beat grids. Generated music is not automatically delivery-cleared (docs/MUSIC-LICENCES.md)."
     },
     "tts": {
-      "model": "openai/gpt-audio",
+      "model": "google/gemini-3.8-flash-tts",
+      "candidates": ["google/gemini-3.8-flash-lite-tts", "elevenlabs/eleven-v4"],
+      "endpoint": "/audio/speech",
       "input": 2.5,
       "output": 2.5,
-      "pricing": "per audio token",
-      "why": "Optional voice replacement when the realtor's take cannot be rescued."
+      "pricing": "per character unless the endpoint reports audio tokens",
+      "capabilities": { "audio_out": true },
+      "why": "Studio voice when a key is configured. Speech models are served by the dedicated endpoint and are not listed in /models; probe before use. Kokoro remains the offline default."
+    },
+    "transcription": {
+      "model": "elevenlabs/scribe-v2",
+      "candidates": ["google/gemini-3.8-flash"],
+      "endpoint": "/audio/transcriptions",
+      "why": "Word-level timings for remix and caption alignment. Optional; local silence detection still works without it."
     }
   },
   "budgets": {
@@ -46,25 +76,26 @@
     "dailyCapUsd": 5.0
   },
   "routing": {
-    "tagging": {
-      "variant": "floor",
-      "why": "High-volume contact sheets. Cheapest provider wins; quality is gated by the bake-off before this is trusted."
-    },
+    "agent": { "variant": "nitro", "why": "Interactive: the user is waiting on a plan or an edit." },
     "planning": {
       "variant": "nitro",
       "why": "Interactive: the user is waiting on a plan or a chat reply. Throughput beats a few tenths of a cent."
+    },
+    "tagging": {
+      "variant": "auto",
+      "why": "Video-capable models are scarce; availability beats a marginal price difference."
     },
     "review": {
       "variant": "auto",
       "why": "Runs unattended in the background; let OpenRouter pick the healthy provider."
     },
     "music": { "variant": "auto", "why": "Metered per track, not per token." },
-    "tts": { "variant": "auto", "why": "Only used when a voiceover must be replaced." }
+    "tts": { "variant": "auto", "why": "Only used when a voiceover must be generated." }
   },
   "caching": {
     "stablePrefix": true,
     "minPrefixTokens": 1024,
-    "policy": "System instructions, JSON schema and style guide go first and never change between calls in a stage; variable content (contact sheet, shot table, user request) goes last. Anthropic models get an explicit ephemeral cache_control breakpoint; Gemini and OpenAI cache long stable prefixes implicitly.",
+    "policy": "System instructions, JSON schema/tool registry and style guide go first and never change between calls in a stage; variable content (contact sheet, shot table, user request) goes last. Anthropic models get an explicit ephemeral cache_control breakpoint; Gemini and OpenAI cache long stable prefixes implicitly.",
     "measure": "Record usage.prompt_tokens_details.cached_tokens and usage.cache_discount on every call; net cost = estimate - cache_discount."
   },
   "upscaling": {

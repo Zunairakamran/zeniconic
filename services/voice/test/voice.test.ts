@@ -198,6 +198,8 @@ describe('buildVoiceTrack', () => {
     expect(result.audioPath).toBe(join(outDir, 'voice-track.m4a'));
     expect(existsSync(result.audioPath)).toBe(true);
     expect(result.durationSec).toBe(8);
+    expect(result.provider).toBe('local');
+    expect(result.characters).toBeGreaterThan(0);
 
     // Captions are ascending and never overlap.
     expect(result.captions).toHaveLength(3);

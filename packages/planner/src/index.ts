@@ -9,7 +9,14 @@ export type {
 } from './types';
 
 export { planVariant } from './plan';
-export { validateSequence } from './sequence';
+export { planSequence, validateSequence } from './sequence';
+
+export {
+  DEFAULT_VARIANT_TARGET_SEC,
+  MARKETING_VARIANT_ID,
+  PLANNED_VARIANTS,
+} from './variants';
+export type { PlannedVariantSpec, VariantFormatId, VariantLookId } from './variants';
 
 export {
   MARKETING_AVERAGE_SHOT_SEC,

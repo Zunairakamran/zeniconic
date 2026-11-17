@@ -54,6 +54,10 @@ export interface TranscriptionResult {
   durationSec: number;
   words: TranscriptWord[];
   segments: TranscriptSegment[];
+  /** Provider-reported cost in USD, absent when the reply carried no usage. */
+  costUsd?: number;
+  /** Audio seconds the provider says it billed, when reported. */
+  usageSeconds?: number;
 }
 
 export type TranscriptionErrorCode = Extract<
@@ -138,6 +142,11 @@ function asString(value: unknown): string | undefined {
 function round3(value: number): number {
   const rounded = Math.round(value * 1000) / 1000;
   return Object.is(rounded, -0) ? 0 : rounded;
+}
+
+/** Money keeps 8 dp: a provider cost of $0.0042 must not become $0.004. */
+function round8(value: number): number {
+  return Math.round(value * 1e8) / 1e8;
 }
 
 function normaliseFormat(format: string): string {
@@ -265,12 +274,24 @@ function normaliseReply(
     asString(raw.text) ??
     words.map((word) => word.word).join(' ');
 
+  // OpenRouter returns `usage` on audio transcriptions when the provider bills
+  // for them. Values we cannot trust are treated as absent, never guessed.
+  const usage = isObject(raw.usage) ? raw.usage : undefined;
+  const reportedCost =
+    asNumber(usage?.cost) ?? asNumber(usage?.total_cost) ?? asNumber(raw.cost);
+  const reportedSeconds =
+    asNumber(usage?.seconds) ?? asNumber(usage?.duration) ?? asNumber(raw.usage_seconds);
+
   return {
     text: text.trim(),
     language: asString(raw.language) ?? 'und',
     durationSec,
     words,
     segments,
+    ...(reportedCost !== undefined && reportedCost >= 0 ? { costUsd: round8(reportedCost) } : {}),
+    ...(reportedSeconds !== undefined && reportedSeconds >= 0
+      ? { usageSeconds: round3(reportedSeconds) }
+      : {}),
   };
 }
 
@@ -292,6 +313,8 @@ function offsetResult(
       start: round3(segment.start + offsetSec),
       end: round3(segment.end + offsetSec),
     })),
+    ...(result.costUsd === undefined ? {} : { costUsd: result.costUsd }),
+    ...(result.usageSeconds === undefined ? {} : { usageSeconds: result.usageSeconds }),
   };
 }
 
@@ -305,6 +328,8 @@ function mergeResults(results: readonly TranscriptionResult[]): TranscriptionRes
   const texts: string[] = [];
   let durationSec = 0;
   let language = 'und';
+  let costUsd: number | undefined;
+  let usageSeconds: number | undefined;
 
   for (const result of results) {
     if (result.text.length > 0) texts.push(result.text);
@@ -312,9 +337,21 @@ function mergeResults(results: readonly TranscriptionResult[]): TranscriptionRes
     durationSec = round3(Math.max(durationSec, result.durationSec));
     words.push(...result.words);
     segments.push(...result.segments);
+    if (result.costUsd !== undefined) costUsd = round8((costUsd ?? 0) + result.costUsd);
+    if (result.usageSeconds !== undefined) {
+      usageSeconds = round3((usageSeconds ?? 0) + result.usageSeconds);
+    }
   }
 
-  return { text: texts.join(' ').trim(), language, durationSec, words, segments };
+  return {
+    text: texts.join(' ').trim(),
+    language,
+    durationSec,
+    words,
+    segments,
+    ...(costUsd === undefined ? {} : { costUsd }),
+    ...(usageSeconds === undefined ? {} : { usageSeconds }),
+  };
 }
 
 function transportFetch(): FetchLike {

@@ -1,7 +1,7 @@
 import { readFileSync } from 'node:fs';
 import { dirname, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import type { ChatClient, ChatRequest } from '@zeniconic/ai';
+import type { ChatClient, ChatRequest, ChatResponse } from '@zeniconic/ai';
 import type { ShotTags } from '../src/index';
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -30,6 +30,10 @@ export interface MockReply {
   text?: string;
   /** Thrown instead of replying, e.g. a transport or auth failure. */
   throws?: unknown;
+  /** Overrides the billed cost for this reply. Defaults to 0.000196. */
+  costUsd?: number;
+  /** Reply as a client that reports no cost at all would. */
+  omitCost?: boolean;
 }
 
 export interface MockClientHandle {
@@ -51,15 +55,16 @@ export function mockClient(replies: MockReply[]): MockClientHandle {
       if (reply.throws !== undefined) throw reply.throws;
 
       const text = reply.text ?? (reply.json === undefined ? '' : JSON.stringify(reply.json));
+      const billing = reply.omitCost === true ? {} : { costUsd: reply.costUsd ?? 0.000196 };
       return {
         text,
         ...(reply.json === undefined ? {} : { json: reply.json }),
         usage: { promptTokens: 1200, completionTokens: 180 },
-        costUsd: 0.000196,
+        ...billing,
         model: req.model,
         cachedTokens: 0,
         cacheDiscountUsd: 0,
-      };
+      } as ChatResponse;
     },
   };
 

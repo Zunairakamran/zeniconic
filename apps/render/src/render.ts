@@ -29,8 +29,8 @@ import { PROFILES } from '../../../packages/render/src/profiles';
 import type { ProfileId } from '../../../packages/render/src/profiles';
 import { canvasFor } from './canvas';
 import { appRoot, renderEntry } from './chromium';
+import type { VideoCompositionProps } from './Composition';
 import { compositionId } from './Root';
-import type { VideoProps } from './types';
 
 export type OverlayQuality = 'draft' | 'standard' | 'high';
 
@@ -44,6 +44,12 @@ export interface RenderOverlayOptions {
   output: string;
   quality: OverlayQuality;
   captions: boolean;
+  /**
+   * Draw the burned captions with reduced motion: opacity and the
+   * character/word reveals stay, every spatial move goes. Default false, so a
+   * caller that does not pass it renders exactly what it did before.
+   */
+  reduceMotion?: boolean;
 }
 
 export interface RenderOverlayResult {
@@ -112,7 +118,12 @@ function shouldBurnCaptions(edl: Edl, requested: boolean): boolean {
   return edl.captions.mode === 'burn' || edl.captions.mode === 'both';
 }
 
-function propsFor(options: RenderOverlayOptions): VideoProps {
+/**
+ * The props handed to the composition. Pure apart from the missing-clip probe
+ * against `listingDir`, so a test can assert exactly what a render will draw —
+ * including `reduceMotion`, which never appears in the EDL.
+ */
+export function propsFor(options: RenderOverlayOptions): VideoCompositionProps {
   return {
     edl: options.edl,
     profile: options.profile,
@@ -120,6 +131,7 @@ function propsFor(options: RenderOverlayOptions): VideoProps {
     captions: shouldBurnCaptions(options.edl, options.captions),
     listingDir: options.listingDir,
     missingClipIds: missingClips(options.edl, options.listingDir),
+    reduceMotion: options.reduceMotion === true,
   };
 }
 

@@ -1,3 +1,5 @@
+export { BEAT_DECODE_SAMPLE_RATE, detectBeatsFromFile, detectBeatsFromSamples } from './beats';
+export type { BeatDetectionOptions, BeatDetectionResult } from './beats';
 export { availableMoods, availableTracks, TRACKS, tracksFor } from './catalog';
 export {
   beatGridFromBpm,

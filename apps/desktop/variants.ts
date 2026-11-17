@@ -1,10 +1,16 @@
 /**
  * Variant persistence for the desktop pipeline.
  *
- * One listing owns three creative variants. Each EDL is a normal `.json` file
- * under `<listing>/variants/`, and one `variants.json` holds the small amount
- * of metadata the UI needs. Writes are atomic, and a variant the user has
+ * One listing owns a set of creative variants: the three 30-second looks, the
+ * 38-second marketing cut, and optionally a remix. Each EDL is a normal `.json`
+ * file under `<listing>/variants/`, and one `variants.json` holds the small
+ * amount of metadata the UI needs. Writes are atomic, and a variant the user has
  * approved is never overwritten by a re-analysis.
+ *
+ * Files are keyed by the variant **id**, not by its look: the marketing cut and
+ * the social cut share the `social` look, and they must not overwrite each
+ * other's EDL. For the three original variants id === look, so a project planned
+ * by an older build resolves exactly the same file it always did.
  */
 
 import { access, mkdir, open, readFile, rename, rm } from 'node:fs/promises';
@@ -13,7 +19,7 @@ import { validateEdl } from '../../packages/edl/src/index';
 import type { Edl, LookId } from '../../packages/edl/src/index';
 import type { VariantLook, VariantSummary } from '../../packages/ipc/src/index';
 
-export const VARIANT_LOOKS: readonly VariantLook[] = ['calm', 'walkthrough', 'social'];
+export const VARIANT_LOOKS: readonly VariantLook[] = ['calm', 'walkthrough', 'social', 'marketing'];
 
 export interface VariantPlan {
   summary: VariantSummary;
@@ -58,6 +64,14 @@ function storedEdlPath(variantId: string): string {
 }
 
 /**
+ * The file stem for a variant. The id is authoritative; a legacy record whose
+ * id is not a valid slug falls back to its look so nothing on disk moves.
+ */
+function variantFileKey(variant: Pick<VariantSummary, 'id' | 'look'>): string {
+  return VARIANT_ID_PATTERN.test(variant.id) ? variant.id : variant.look;
+}
+
+/**
  * Converts an on-disk EDL path back to the relative form stored in
  * `variants.json`. A file outside `<listing>/variants` falls back to the
  * canonical planned file; anything else is a programming error, not user data.
@@ -65,11 +79,11 @@ function storedEdlPath(variantId: string): string {
 function relativeStoredEdlPath(
   listingDir: string,
   absolutePath: string,
-  look: VariantLook,
+  key: string,
 ): string {
   const inside = relative(variantsDir(listingDir), absolutePath).replace(/\\/g, '/');
   const candidate = `${VARIANTS_DIR}/${inside}`;
-  return STORED_EDL_PATTERN.test(candidate) ? candidate : storedEdlPath(look);
+  return STORED_EDL_PATTERN.test(candidate) ? candidate : storedEdlPath(key);
 }
 
 function asAbsolute(listingDir: string, stored: string): string {
@@ -81,14 +95,14 @@ function asAbsolute(listingDir: string, stored: string): string {
  *
  * The relative form wins. An absolute path from an older build is accepted
  * while the file still exists (the metadata is rewritten in relative form on
- * the next save); if that file is gone — because the data directory moved —
- * the canonical `<listing>/variants/<look>.json` is used instead.
+ * the next save); if that file is gone — because the data directory moved — the
+ * canonical `<listing>/variants/<id>.json` is used instead.
  */
 export async function resolveVariantEdlPath(
   listingDir: string,
-  variant: Pick<VariantSummary, 'look' | 'edlPath'>,
+  variant: Pick<VariantSummary, 'id' | 'look' | 'edlPath'>,
 ): Promise<string | undefined> {
-  const canonical = edlPath(listingDir, variant.look);
+  const canonical = edlPath(listingDir, variantFileKey(variant));
   const stored = variant.edlPath.trim();
   const candidates = stored.length === 0 ? [canonical] : [asAbsolute(listingDir, stored), canonical];
 
@@ -190,13 +204,14 @@ export async function saveVariants(
   plans: VariantPlan[],
 ): Promise<VariantSummary[]> {
   const current = await readVariants(listingDir);
-  const byLook = new Map(current.map((variant) => [variant.look, variant]));
+  const byId = new Map(current.map((variant) => [variant.id, variant]));
   const next: VariantSummary[] = [];
 
   await mkdir(variantsDir(listingDir), { recursive: true });
 
   for (const plan of plans) {
-    const existing = byLook.get(plan.summary.look);
+    const key = variantFileKey(plan.summary);
+    const existing = byId.get(plan.summary.id);
     const existingPath =
       existing === undefined ? undefined : await resolveVariantEdlPath(listingDir, existing);
     if (existing?.approved === true && existingPath !== undefined) {
@@ -205,24 +220,24 @@ export async function saveVariants(
       // current instead of being reset to the canonical planned file.
       next.push({
         ...existing,
-        edlPath: relativeStoredEdlPath(listingDir, existingPath, existing.look),
+        edlPath: relativeStoredEdlPath(listingDir, existingPath, key),
       });
       continue;
     }
 
-    const path = edlPath(listingDir, plan.summary.look);
+    const path = edlPath(listingDir, key);
     await writeJson(path, plan.edl);
     next.push({
       ...plan.summary,
-      edlPath: storedEdlPath(plan.summary.look),
+      edlPath: storedEdlPath(key),
       approved: false,
     });
   }
 
   // Keep any previously approved variant that this plan did not mention.
   for (const variant of current) {
-    if (variant.approved && !next.some((item) => item.look === variant.look)) {
-      next.push({ ...variant, edlPath: storedEdlPath(variant.look) });
+    if (variant.approved && !next.some((item) => item.id === variant.id)) {
+      next.push({ ...variant, edlPath: storedEdlPath(variantFileKey(variant)) });
     }
   }
 
@@ -247,12 +262,13 @@ export async function setVariantApproval(
 
   const found = variants[index]!;
   const resolved = await resolveVariantEdlPath(listingDir, found);
+  const key = variantFileKey(found);
   const updated: VariantSummary = {
     ...found,
     // Keep the relative form when the canonical file is what we resolved.
     edlPath:
-      resolved === edlPath(listingDir, found.look)
-        ? storedEdlPath(found.look)
+      resolved === edlPath(listingDir, key)
+        ? storedEdlPath(key)
         : found.edlPath,
     approved,
   };
@@ -352,7 +368,41 @@ export function scoreForEdl(edl: Edl): number {
   return Math.round((total / edl.clips.length) * 100);
 }
 
+/**
+ * Saves a remix EDL as the `remix` variant. It is not one of the three planned
+ * looks, so it is appended by id and never overwrites an approved edit.
+ */
+export async function saveRemixVariant(
+  listingDir: string,
+  edl: Edl,
+): Promise<VariantSummary> {
+  const variants = await readVariants(listingDir);
+  const existing = variants.find((variant) => variant.id === 'remix');
+  if (existing?.approved === true) {
+    throw new Error('The remix variant is approved; unapprove it before replacing it.');
+  }
+
+  const path = edlPath(listingDir, 'remix');
+  await writeJson(path, edl);
+  const updated: VariantSummary = {
+    id: 'remix',
+    look: 'social',
+    format: edl.format.id,
+    targetDurationSec: edl.format.targetDurationSec,
+    clipCount: edl.clips.length,
+    score: scoreForEdl(edl),
+    edlPath: storedEdlPath('remix'),
+    approved: false,
+  };
+
+  const next = existing === undefined
+    ? [...variants, updated]
+    : variants.map((variant) => (variant.id === 'remix' ? updated : variant));
+  await writeJson(metadataPath(listingDir), { version: 1, variants: next } satisfies VariantsFile);
+  return updated;
+}
+
 /** The look id used by the planner. Kept local so this module stays honest. */
 export function asLook(look: VariantLook): LookId {
-  return look;
+  return look === 'marketing' ? 'social' : look;
 }

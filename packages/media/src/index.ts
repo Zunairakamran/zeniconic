@@ -1,5 +1,5 @@
-export { parseProbeJson, probe } from './probe';
-export type { ProbeResult } from './probe';
+export { parseProbeJson, parseAudioProbeJson, probe, probeAudio } from './probe';
+export type { AudioProbeResult, ProbeResult } from './probe';
 
 export { ffmpegPath, ffprobePath } from './paths';
 

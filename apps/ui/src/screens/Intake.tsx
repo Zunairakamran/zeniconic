@@ -10,15 +10,6 @@ type FactText = Record<FactKey, string>;
 
 const factKeys: FactKey[] = ['price', 'beds', 'baths', 'address', 'sqft'];
 
-const clips = [
-  { room: 'Kitchen', tone: 'kitchen' },
-  { room: 'Living', tone: 'living' },
-  { room: 'Bedroom', tone: 'bedroom' },
-  { room: 'Balcony', tone: 'balcony' },
-  { room: 'Hall', tone: 'hall' },
-  { room: 'Bath', tone: 'bath' },
-];
-
 const ASPECT_PROFILES = {
   vertical: 'vertical-social',
   wide: 'landscape',
@@ -167,28 +158,34 @@ export function IntakeScreen({
   const confirmed = factKeys.filter((key) => facts[key].trim() !== '').length;
   const aspectsOn = Number(aspects.vertical) + Number(aspects.wide) + Number(aspects.square);
   const sqftMissing = facts.sqft.trim() === '';
+  const clipCount = listing.clipCount ?? 0;
+  const bedsLine = listing.beds > 0 ? `${listing.beds} bed` : undefined;
+  const bathsLine = listing.baths > 0 ? `${listing.baths} bath` : undefined;
+  const specLine = [bedsLine, bathsLine].filter(Boolean).join(' · ') || 'Spec line';
 
+  // Look previews are typography samples: the only real values in them come
+  // from the listing, the rest are literal template placeholders.
   const looks: Array<{ id: LookId; name: string; desc: string; line: string; caption: string }> = [
     {
       id: 'calm',
       name: 'Calm',
       desc: 'Serif type, slow cuts, room to breathe.',
-      line: 'A quiet corner of the Marina.',
-      caption: listing.community,
+      line: listing.community || 'Community',
+      caption: listing.address || 'Address line',
     },
     {
       id: 'social',
       name: 'Social',
       desc: 'Bold hooks, faster cuts, captions on.',
-      line: 'Just listed',
-      caption: listing.price,
+      line: listing.price || 'Price',
+      caption: specLine,
     },
     {
       id: 'walkthrough',
       name: 'Walkthrough',
       desc: 'Room order, labels, steady pace.',
-      line: 'Kitchen',
-      caption: 'Room 01 · walkthrough',
+      line: 'Room name',
+      caption: 'Room label',
     },
   ];
 
@@ -295,13 +292,32 @@ export function IntakeScreen({
               </p>
             ) : null}
 
-            <div className="intake-strip" aria-hidden="true">
-              {clips.map((clip) => (
-                <span key={clip.room} className={`intake-shot intake-shot--${clip.tone}`}>
-                  <span className="intake-shot__label">{clip.room}</span>
-                </span>
-              ))}
-              <span className="intake-strip__more">+17</span>
+            <div className="intake-footage" role="status" aria-live="polite">
+              {clipCount > 0 ? (
+                <>
+                  <span className="intake-footage__count">{clipCount} clips in the footage index</span>
+                  <p className="intake-drop__meta">
+                    Rooms, scores and durations for every indexed shot are on Shot review.
+                  </p>
+                  <Button
+                    type="button"
+                    size="sm"
+                    variant="quiet"
+                    onClick={() => onNavigate('shots')}
+                  >
+                    Review shots
+                  </Button>
+                </>
+              ) : listing.status === 'analysing' ? (
+                <p className="intake-drop__meta">
+                  Analysis is running. Sizes, orientation and rooms appear after indexing.
+                </p>
+              ) : (
+                <p className="intake-drop__meta">
+                  No footage indexed yet. Choose a folder, then Analyse reads the clips on this
+                  machine.
+                </p>
+              )}
             </div>
 
             <p className="intake-drop__note">

@@ -2,14 +2,14 @@ import { describe, expect, it } from 'vitest';
 import { MODEL_PRICES, estimateCostUsd } from '../src/index';
 
 describe('estimateCostUsd', () => {
-  it('costs google/gemini-3.8-flash at $4.95 for 1M prompt + 1M completion', () => {
-    expect(MODEL_PRICES['google/gemini-3.8-flash']).toEqual({ input: 0.825, output: 4.125 });
+  it('costs google/gemini-3.8-flash at $4.5 for 1M prompt + 1M completion', () => {
+    expect(MODEL_PRICES['google/gemini-3.8-flash']).toEqual({ input: 0.75, output: 3.75 });
     expect(
       estimateCostUsd('google/gemini-3.8-flash', {
         promptTokens: 1_000_000,
         completionTokens: 1_000_000,
       }),
-    ).toBe(4.95);
+    ).toBe(4.5);
   });
 
   it('prices planning tokens from the pinned table', () => {

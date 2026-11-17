@@ -34,6 +34,7 @@
 import { roundTime, totalDuration } from '@zeniconic/core';
 import type { Clip, Edl, TransitionType } from '@zeniconic/edl';
 import type { RenderProfile } from './profiles';
+import { clipEffectFilters, globalEffectFilters } from './effects';
 
 /** Result of planning the picture graph, including the exact `-t` value. */
 export interface GraphResult {
@@ -68,6 +69,17 @@ const XFADE_BY_TYPE: Record<XfadeTransition, string> = {
   zoom_blur: 'zoomin',
   luma_wipe: 'hblur',
   light_leak: 'radial',
+  dip_black: 'fadeblack',
+  dip_white: 'fadewhite',
+  blur: 'hblur',
+  // The bundled FFmpeg 6.1 xfade has hblur but no vblur, so the directional
+  // variant is the horizontal blur; documented, never silent.
+  directional_blur: 'hblur',
+  push_left: 'slideleft',
+  push_right: 'slideright',
+  circle: 'circleopen',
+  wipe: 'wipeleft',
+  glitch: 'pixelize',
 };
 
 /** Used when a build's `xfade` lacks the primary transition above. */
@@ -82,6 +94,15 @@ export const XFADE_PALETTE = {
   light_leak: 'radial',
   whip: 'smoothleft',
   light_leak_alternate: 'fadeblack',
+  dip_black: 'fadeblack',
+  dip_white: 'fadewhite',
+  blur: 'hblur',
+  directional_blur: 'hblur',
+  push_left: 'slideleft',
+  push_right: 'slideright',
+  circle: 'circleopen',
+  wipe: 'wipeleft',
+  glitch: 'pixelize',
 } as const;
 
 /** Schema cap. Duplicated here because the graph is a runtime boundary. */
@@ -328,6 +349,23 @@ function clipTimelineSec(clip: Clip): number {
   if (!Number.isFinite(speed) || speed <= 0) {
     throw new RangeError(`Clip ${clip.id} has non-positive speed (${clip.speed}).`);
   }
+  const ramp = clip.speedRamp;
+  if (ramp !== undefined && ramp.length >= 2) {
+    // Same formula the validator uses: each segment carries the left knot's
+    // speed over its share of the source window.
+    const source = outSec - inSec;
+    let total = 0;
+    for (let index = 0; index + 1 < ramp.length; index += 1) {
+      const from = ramp[index]!;
+      const to = ramp[index + 1]!;
+      const segment = (to.t - from.t) * source;
+      if (!Number.isFinite(segment) || !Number.isFinite(from.speed) || from.speed <= 0) {
+        throw new RangeError(`Clip ${clip.id} has a malformed speed ramp.`);
+      }
+      total += segment / from.speed;
+    }
+    return roundTime(total);
+  }
   return (outSec - inSec) / speed;
 }
 
@@ -365,30 +403,65 @@ function clipChains(
   }
 
   const { width, height } = profile;
-  // `trim` selects the source window; `setpts` rebases the timestamps and then
-  // divides by speed, so 1.25× both shortens the window and speeds playback.
-  // A transition handle extends the window past `outSec`; the xfade that
-  // consumes it then leaves the assembled timeline exactly as the EDL says.
-  const trimEnd = roundTime(clip.outSec) + Math.max(0, roundTime(handleSec));
-  const head = `[${input}:v]trim=start=${sec3(clip.inSec)}:end=${sec3(trimEnd)},setpts=(PTS-STARTPTS)/${speed3(clip.speed)}`;
   // xfade and concat require matching pixel formats across every branch. The
   // cut-only path omits the filter so its graph stays identical to v1.
   const format = normaliseFormat ? ',format=yuv420p' : '';
-  const tail = `fps=${fps(profile.fps)},setsar=1${format}[${videoLabel(index)}]`;
+  // Effects and the clip grade run after framing and before the normalisation
+  // tail. With no effects this string is empty, so v1 graphs stay byte-identical.
+  const extras = clipEffectFilters(clip).join(',');
+  const graded = extras.length > 0 ? `${extras},` : '';
+  const tail = `${graded}fps=${fps(profile.fps)},setsar=1${format}[${videoLabel(index)}]`;
+
+  const chains: string[] = [];
+  const ramp = clip.speedRamp;
+  let headPrefix: string;
+
+  if (ramp !== undefined && ramp.length >= 2) {
+    if (roundTime(clip.speed) !== 1) {
+      throw new RangeError(`Clip ${clip.id} has a speed ramp and a scalar speed; only one may drive it.`);
+    }
+    if (roundTime(handleSec) > 0) {
+      throw new RangeError(`Clip ${clip.id} cannot lend a transition handle while speed-ramped.`);
+    }
+    const source = roundTime(clip.outSec) - roundTime(clip.inSec);
+    const labels: string[] = [];
+    for (let position = 0; position + 1 < ramp.length; position += 1) {
+      const from = ramp[position]!;
+      const to = ramp[position + 1]!;
+      const start = roundTime(clip.inSec + from.t * source);
+      const end = roundTime(clip.inSec + to.t * source);
+      const speed = from.speed > 0 ? from.speed : 1;
+      const label = `cr${index}_${position}`;
+      chains.push(
+        `[${input}:v]trim=start=${sec3(start)}:end=${sec3(end)},setpts=(PTS-STARTPTS)/${speed3(speed)}[${label}]`,
+      );
+      labels.push(`[${label}]`);
+    }
+    const out = `cr${index}`;
+    chains.push(`${labels.join('')}concat=n=${labels.length}:v=1:a=0[${out}]`);
+    headPrefix = `[${out}]`;
+  } else {
+    // `trim` selects the source window; `setpts` rebases the timestamps and then
+    // divides by speed. A transition handle extends the window past `outSec`.
+    const trimEnd = roundTime(clip.outSec) + Math.max(0, roundTime(handleSec));
+    headPrefix = `[${input}:v]trim=start=${sec3(clip.inSec)}:end=${sec3(trimEnd)},setpts=(PTS-STARTPTS)/${speed3(clip.speed)},`;
+  }
 
   switch (clip.transform.mode) {
     case 'cover':
       // Fill the canvas, then centre-crop the overflow. `increase` guarantees
       // one axis matches exactly, so crop never invents a border.
       return [
-        `${head},scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},${tail}`,
+        ...chains,
+        `${headPrefix}scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},${tail}`,
       ];
 
     case 'contain':
       // Fit the whole frame and pad the difference with black. Both dimensions
       // are exact because `decrease` never exceeds the canvas.
       return [
-        `${head},scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black,${tail}`,
+        ...chains,
+        `${headPrefix}scale=${width}:${height}:force_original_aspect_ratio=decrease,pad=${width}:${height}:(ow-iw)/2:(oh-ih)/2:color=black,${tail}`,
       ];
 
     case 'pad_blur': {
@@ -405,7 +478,8 @@ function clipChains(
       const blurred = `c${index}blur`;
       const fitted = `c${index}fit`;
       return [
-        `${head},split=2[${bg}][${fg}]`,
+        ...chains,
+        `${headPrefix}split=2[${bg}][${fg}]`,
         `[${bg}]scale=${width}:${height}:force_original_aspect_ratio=increase,crop=${width}:${height},boxblur=20:2[${blurred}]`,
         `[${fg}]scale=${width}:${height}:force_original_aspect_ratio=decrease[${fitted}]`,
         // Overlay keeps the background's W×H, so the output canvas is exact.
@@ -541,6 +615,13 @@ function buildGraphResult(
     durationSec = roundTime(
       segments.reduce((total, segment) => total + segment.durationSec, 0),
     );
+  }
+
+  // Timeline-wide effects and grade run after the assembled picture and before
+  // captions, so text stays legible. Empty for plain v1 documents.
+  const globalFilters = globalEffectFilters(edl);
+  if (globalFilters.length > 0) {
+    chains.push(`[outv]${globalFilters.join(',')}[outv]`);
   }
 
   if (captionsPath !== undefined && captionsPath.length > 0) {

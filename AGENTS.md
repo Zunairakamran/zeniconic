@@ -62,7 +62,10 @@ Real render / QA harnesses live in `scripts/` (e.g. `qa-landscape-export.ts`,
 
 - Installer `0.1.0` is published (fixed sharp runtime deps); source is private.
 - Studio voice gallery, Kokoro downloader, marketing_38, chat refine: shipped.
-- Remix modules are built and tested but **not wired into IPC/UI**.
+- Agentic editor, reference-guided planning, Lyria music, segment cache,
+  real Refine draft playback, crash-safe resume: shipped and tested.
+- Remix is wired end to end with manual reorder, room tags and transcription
+  cost; `marketing38` is the fourth exportable variant.
 - Delivery cuts live in `data/marketing/out/deliver_*.mp4` and are copied to
   `deliverables/` for handover.
 

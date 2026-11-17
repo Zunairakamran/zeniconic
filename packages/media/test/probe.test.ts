@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 
-import { parseProbeJson, probe, ffprobePath } from '../src/index';
+import { parseAudioProbeJson, parseProbeJson, probe, ffprobePath } from '../src/index';
 import type { Runner } from '../src/index';
 import landscapePhone from './fixtures/landscape-phone.json';
 import portraitRotation from './fixtures/portrait-rotation-90.json';
@@ -202,5 +202,32 @@ describe('probe', () => {
     await expect(probe('missing.mp4', runner)).rejects.toThrow(
       /No such file or directory/,
     );
+  });
+});
+
+describe('parseAudioProbeJson', () => {
+  const audio = {
+    streams: [
+      { codec_type: 'audio', codec_name: 'mp3', sample_rate: '44100', channels: 2 },
+    ],
+    format: { duration: '30.772167' },
+  };
+
+  it('parses an audio-only file', () => {
+    expect(parseAudioProbeJson(audio)).toEqual({
+      durationSec: 30.772,
+      sampleRate: 44100,
+      channels: 2,
+      codec: 'mp3',
+    });
+  });
+
+  it('rejects a file without an audio stream or duration', () => {
+    expect(() => parseAudioProbeJson({ streams: [{ codec_type: 'video' }], format: {} })).toThrow(
+      /no audio stream/,
+    );
+    expect(() =>
+      parseAudioProbeJson({ streams: [{ codec_type: 'audio', sample_rate: 48000 }], format: {} }),
+    ).toThrow(/no duration/);
   });
 });

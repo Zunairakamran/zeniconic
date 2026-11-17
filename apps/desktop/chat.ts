@@ -46,6 +46,16 @@ export interface ChatService {
     listingId: string,
     variantId: string,
   ): Promise<Array<{ id: string; createdAt: string; summary: string }>>;
+  /**
+   * Writes an already-validated agent draft as a new version. Same lock,
+   * same manifest and same EDL validation as `send`, but no model call.
+   */
+  commit(input: {
+    listingId: string;
+    variantId: string;
+    edl: Edl;
+    summary: string;
+  }): Promise<{ versionId: string; diff: string; warnings: string[] }>;
 }
 
 /** The request the service hands to the injected model call. */
@@ -811,7 +821,7 @@ class DesktopChatService implements ChatService {
     after: Edl;
     summary: string;
   }): Promise<VersionRecord> {
-    const file = manifestPath(input.listingDir, input.variant.look);
+    const file = manifestPath(input.listingDir, input.variant.id);
     const history = await readVersionsFile(file);
 
     let number =
@@ -819,15 +829,15 @@ class DesktopChatService implements ChatService {
         const value = versionNumber(record.id);
         return value === null ? highest : Math.max(highest, value);
       }, 0) + 1;
-    while (await exists(versionPath(input.listingDir, input.variant.look, number))) {
+    while (await exists(versionPath(input.listingDir, input.variant.id, number))) {
       number += 1;
     }
 
     const createdAt = this.options.now?.() ?? new Date().toISOString();
-    const versionId = `${input.variant.look}-v${String(number)}`;
+    const versionId = `${input.variant.id}-v${String(number)}`;
     const versionEdl: Edl = {
       ...input.after,
-      id: `edl_${input.variant.look}-chat_v${String(number)}`,
+      id: `edl_${input.variant.id}-chat_v${String(number)}`,
       parentId: input.before.id,
       createdAt,
     };
@@ -840,13 +850,13 @@ class DesktopChatService implements ChatService {
       );
     }
 
-    await writeJsonAtomic(versionPath(input.listingDir, input.variant.look, number), versionEdl);
+    await writeJsonAtomic(versionPath(input.listingDir, input.variant.id, number), versionEdl);
 
     const record: VersionRecord = {
       id: versionId,
       createdAt,
       summary: input.summary,
-      path: storedVersionPath(input.variant.look, number),
+      path: storedVersionPath(input.variant.id, number),
     };
     await writeJsonAtomic(file, {
       version: 1,
@@ -912,6 +922,40 @@ class DesktopChatService implements ChatService {
       }
 
       return { ok: true };
+    });
+  }
+
+  async commit(input: {
+    listingId: string;
+    variantId: string;
+    edl: Edl;
+    summary: string;
+  }): Promise<{ versionId: string; diff: string; warnings: string[] }> {
+    const listingDir = this.options.listingDir(input.listingId);
+    const lockKey = `${input.listingId}/${input.variantId}`;
+
+    return this.withLock(lockKey, async () => {
+      const variant = await this.requireVariant(listingDir, input.variantId);
+      const before = await readVariantEdl(listingDir, variant.id);
+      const check = validateEdl(input.edl);
+      if (!check.valid) {
+        throw new ChatError(
+          'E_CHAT_INVALID_EDIT',
+          `That edit is not valid (${describeIssues(check.issues)}). Nothing was changed.`,
+        );
+      }
+      const diff = summariseDiff(before, input.edl);
+      if (diff === 'Nothing to change') {
+        throw new ChatError('E_CHAT_INVALID_EDIT', 'That edit does not change anything.');
+      }
+      const stored = await this.writeVersion({
+        listingDir,
+        variant,
+        before,
+        after: input.edl,
+        summary: input.summary.trim().length > 0 ? input.summary : diff,
+      });
+      return { versionId: stored.id, diff, warnings: [] };
     });
   }
 

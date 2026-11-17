@@ -24,7 +24,10 @@
       "@zeniconic/render": ["packages/render/src/index.ts"],
       "@zeniconic/ai": ["packages/ai/src/index.ts"],
       "@zeniconic/store": ["packages/store/src/index.ts"],
-      "@zeniconic/jobs": ["packages/jobs/src/index.ts"]
+      "@zeniconic/jobs": ["packages/jobs/src/index.ts"],
+      "@zeniconic/capabilities": ["packages/capabilities/src/index.ts"],
+      "@zeniconic/agent": ["packages/agent/src/index.ts"],
+      "@zeniconic/ledger": ["packages/ledger/src/index.ts"]
     }
   },
   "include": ["packages/**/*.ts", "scripts/**/*.ts", "services/**/*.ts", "tests/**/*.ts"],

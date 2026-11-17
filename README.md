@@ -14,23 +14,43 @@ can approve or ask to change.
 ## What it does
 
 - **Watches the footage.** One decode pass scores every shot for sharpness, shake,
-  exposure and motion; a vision model names the room, the camera move, the selling
-  points and the defects.
-- **Builds complete edits, not clips.** Three looks (Calm, Walkthrough, Social), each
-  a full 30-second cut with music, voice, captions, price card and end card.
+  exposure and motion; with `ZENICONIC_TAG=1` a vision model names the room, the
+  camera move, the selling points and the defects, and ShotReview shows the real
+  index instead of demo data.
+- **Builds complete edits, not clips.** Four variants: three 30-second looks (Calm,
+  Walkthrough, Social) plus the 38-second **Marketing 38** campaign cut. Each is a
+  full edit with music, voice, captions, price card and end card.
 - **Says why.** Every shot carries a reason; every rejected shot stays visible with
   the defect that sank it.
-- **Studio voice.** ElevenLabs `eleven-v4` through OpenRouter, with a Settings
-  gallery of bundled sample voices (matilda default) and emotion tags in the
-  script. The agent's own recorded lines can lead and the studio voice can carry
-  the rest. Kokoro remains the offline fallback, downloaded on request (92 MB,
-  resumable).
+- **Studio voice.** Gemini TTS (`google/gemini-3.8-flash-tts`) is the working
+  studio path, with ElevenLabs `eleven-v4` as the alternate and a Settings gallery
+  of bundled samples. Kokoro remains the offline fallback, downloaded on request
+  (92 MB, resumable). Voice spend is recorded in the ledger.
 - **Captions that look designed.** Bricolage 800 uppercase, two lines maximum, no
   background plate, accent on the most substantial word.
 - **Aspect-aware.** 9:16, 16:9 and 1:1 from one edit; portrait into landscape uses a
   contained frame over a blurred fill rather than a hard crop.
-- **Edits on request.** "Swap the kitchen for the balcony, cut to 28 seconds" becomes a
-  validated patch to the edit, previewed before it applies.
+- **Edits on request, executed.** The agent inspects the edit, discovers from a
+  29-operation capability registry, applies validated changes (trim, split,
+  reorder, speed, speed ramps, transitions with real source handles, effects,
+  grades, captions, overlays, audio) and commits a version. Under *Auto* the new
+  cut is made current; under *Ask* it is saved for your approval. A request that
+  cannot be done safely is refused, never half-applied; if a requested change is
+  skipped, the reply says so. Draft renders play back in the Refine stage. See
+  `docs/AGENTIC_ARCHITECTURE.md`.
+- **Borrow a reference look.** Add a reference video in Refine: its pacing, shot
+  lengths, palette and style are measured locally, handed to the agent as
+  guidance (never as a property fact) and used to pace automatic planning.
+- **Improve a finished video.** The Remix screen splits an existing cut into
+  scenes and proposes three reorders (marketing, original, price-led), optionally
+  transcribes the speech and burns captions, then lets you move scenes, tag rooms,
+  see the provider-reported transcription cost, and save the result as a variant.
+- **Music that fits.** Generate a bed with Lyria 3 Pro through OpenRouter from
+  Settings (about $0.08 per song); it is saved locally and used by new exports.
+- **Fast re-renders.** A per-clip segment cache reuses unchanged picture segments
+  after a chat edit, so only the clips you changed are encoded again.
+- **Crash-safe.** Analysis jobs persist checkpoints; after a hard kill a restart
+  resumes at the right stage and reuses a verified footage index.
 - **Location-led marketing cut.** A 38-second beat sheet (hook → light → ritual →
   craft → space → lift → price → close) with slice/zoom/light transitions and a
   proximity card. Rendered in FFmpeg, not Remotion, so it takes minutes.
@@ -57,7 +77,6 @@ losing the connection costs only the bytes in flight. Everything else works with
 Requirements: Windows 10/11 x64, ~600 MB disk for the app, ~2 GB during a render.
 
 ## Five-minute start
-
 1. **New video** → choose the folder of clips.
 2. **Check the facts** — price, beds, baths, address. A missing fact is better than a
    wrong one; export is gated on this.
@@ -71,14 +90,17 @@ Files land in `%APPDATA%\Zeniconic\data\listings\<slug>\exports\`.
 
 ```
 apps/ui            React 19 + Vite renderer, nine screens, light/dark
-apps/desktop       Electron main, IPC, jobs, export pipeline
+apps/desktop       Electron main, IPC, agent host, export pipeline
 apps/render        Remotion composition: overlays, captions, crossfades
-packages/edl       JSON Schema + runtime invariants — the contract
+packages/edl       JSON Schema + runtime invariants — the contract (v2)
 packages/planner   shot selection, pacing, overlays, deterministic EDLs
-packages/render    FFmpeg filter graphs, profiles, segment cache
+packages/render    FFmpeg filter graphs, effects/grade lowering, profiles
 packages/review    deterministic checks before vision review
+packages/capabilities  capability registry: 28 validated editing operations
+packages/agent     orchestrator: context → tools → draft → commit
 services/pipeline  analyse → plan → render orchestration
-services/voice     Kokoro + presenter windows, ducking, mastering
+services/voice     studio TTS with Kokoro backup, ducking, mastering
+services/reference reference-video style analysis (local + optional vision)
 ```
 
 Every stage is a module with tests. An EDL (edit decision list) is the single source
@@ -91,11 +113,16 @@ See `docs/SPEC.md` for the full specification and `docs/BUILD.md` for the module
 
 | Stage | Model | Notes |
 |---|---|---|
-| Tagging | `google/gemini-3.8-flash` | contact sheets, `:floor` routing |
+| Agent | `deepseek/deepseek-v4.1-flash` | tool calling; escalates to `openai/gpt-6-astra` |
+| Tagging | `perceptron/perceptron-mk1.5` | video/image/audio; Gemini fallback |
 | Planning / chat | `openai/gpt-6-astra` | `:nitro`; tool calling |
-| Review | `google/gemini-4-carbon` | rendered frames |
+| Review | `google/gemini-4-hydrogen` | rendered frames, Gemini Carbon fallback |
 | Music | `google/lyria-3-pro-preview` | one bank, not per listing |
-| Voice | Kokoro-82M (local) | Apache-2.0, CPU |
+| Voice | `google/gemini-3.8-flash-tts` | optional; Kokoro-82M offline backup |
+
+Model ids live in `services/pipeline/models.json`; no call site hardcodes one.
+The agent's capability catalogue and safety limits are documented in
+`docs/AGENT_TOOL_REFERENCE.md`.
 
 Typical listing: **$0.20–0.60** in model spend. Rendering is local and free; AI
 upscaling is opt-in and priced per file.

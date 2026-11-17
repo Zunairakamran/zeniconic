@@ -49,6 +49,22 @@ interface LowerThirdWindow {
   outFrame: number;
 }
 
+/**
+ * The props the composition draws.
+ *
+ * `reduceMotion` rides alongside `VideoProps` because it is a drawing
+ * preference, not part of the EDL contract: it must never invalidate a take.
+ * It defaults to false, so an existing render that does not pass it draws
+ * exactly what it drew before.
+ */
+export type VideoCompositionProps = VideoProps & {
+  /**
+   * Honour the user's reduced-motion preference in the burned captions:
+   * opacity and the character/word reveals stay, every spatial move goes.
+   */
+  reduceMotion?: boolean;
+};
+
 function scrimOpacityAt(frame: number, windows: LowerThirdWindow[], fps: number): number {
   const fade = Math.max(1, Math.round(0.24 * fps));
   let strongest = 0;
@@ -175,6 +191,7 @@ function Timeline({
   listingDir,
   captions,
   missingClipIds,
+  reduceMotion = false,
 }: {
   edl: Edl;
   canvas: CanvasSpec;
@@ -183,6 +200,7 @@ function Timeline({
   listingDir: string;
   captions: boolean;
   missingClipIds: string[];
+  reduceMotion?: boolean;
 }) {
   const frame = useCurrentFrame();
   const { fps } = useVideoConfig();
@@ -280,6 +298,7 @@ function Timeline({
             canvas={canvas}
             colours={colours}
             style={edl.captions.style}
+            reduceMotion={reduceMotion}
           />
         ) : null}
 
@@ -310,7 +329,15 @@ function Timeline({
   );
 }
 
-export function VideoComposition({ edl, profile, brand, captions, listingDir, missingClipIds }: VideoProps) {
+export function VideoComposition({
+  edl,
+  profile,
+  brand,
+  captions,
+  listingDir,
+  missingClipIds,
+  reduceMotion = false,
+}: VideoCompositionProps) {
   const { fps } = useVideoConfig();
   const [fontHandle] = useState(() =>
     delayRender('Loading bundled fonts', { timeoutInMilliseconds: 20_000 }),
@@ -352,6 +379,7 @@ export function VideoComposition({ edl, profile, brand, captions, listingDir, mi
           listingDir={listingDir}
           captions={captions}
           missingClipIds={missingClipIds ?? []}
+          reduceMotion={reduceMotion}
         />
       ) : (
         <EmptyState message="No EDL loaded. Render this composition with an EDL to see the overlays." />

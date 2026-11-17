@@ -169,6 +169,7 @@ export function planVariant(request: PlanRequest): Edl {
     request.look.id,
     request.music.beatGrid,
     request.seed,
+    request.referenceStyle?.averageShotSec,
   );
 
   const clips = planned.map((clip, index) => toClip(clip, index));

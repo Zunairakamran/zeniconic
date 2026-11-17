@@ -4,6 +4,8 @@ import { applyTheme, getStoredTheme, type Theme } from '../theme';
 import { api } from '../api';
 import type { VoiceModelStatus, VoiceOption } from '../api';
 import { DEFAULT_VOICE_ID, SAMPLE_LINE } from '../../../../services/voice/src/voices';
+import { availableTracks } from '../../../../packages/music/src/catalog';
+import modelsConfig from '../../../../services/pipeline/models.json';
 import type { ScreenProps } from '../types';
 import './Settings.css';
 
@@ -12,28 +14,47 @@ function formatBytes(bytes: number): string {
   return mb >= 1000 ? `${(mb / 1000).toFixed(2)} GB` : `${mb.toFixed(1)} MB`;
 }
 
-const models = [
-  { role: 'Room tagging', kind: 'Vision', id: 'google/gemini-3.8-flash' },
-  { role: 'Planning', kind: 'Text', id: 'openai/gpt-6-astra' },
-  { role: 'Review', kind: 'Vision', id: 'google/gemini-4-carbon' },
-];
+const ROLE_META: Record<string, { role: string; kind: string }> = {
+  agent: { role: 'Agent', kind: 'Tool calling' },
+  planning: { role: 'Planning', kind: 'Text' },
+  tagging: { role: 'Room tagging', kind: 'Vision + video' },
+  review: { role: 'Review', kind: 'Vision' },
+  tts: { role: 'Studio voice', kind: 'Speech' },
+  music: { role: 'Music', kind: 'Audio out' },
+  transcription: { role: 'Transcription', kind: 'Speech to text' },
+};
 
-const spendCap = 20;
+/** Real pinned roles from `models.json`; never a hand-maintained copy. */
+const models = Object.entries(modelsConfig.roles)
+  .filter(([key]) => ROLE_META[key] !== undefined)
+  .map(([key, value]) => ({
+    key,
+    role: ROLE_META[key]!.role,
+    kind: ROLE_META[key]!.kind,
+    id: (value as { model: string }).model,
+  }));
 
-const moods = [
-  { name: 'Calm bed', tracks: 1, tempo: '96 bpm', licence: 'Internal only' as const },
-  { name: 'Catchy 120', tracks: 1, tempo: '120 bpm', licence: 'Internal only' as const },
-  { name: 'Luxury', tracks: 0, tempo: '—', licence: 'No files' as const },
-];
+const spendCap = modelsConfig.budgets.monthlyCapUsd;
 
-const logLines = [
-  { time: '14:02:12', scope: 'model', text: 'gemini-3.8-flash · 412 tokens · $0.0007' },
-  { time: '14:02:11', scope: 'pipeline', text: 'stage=scoring · 160/234 · 0.9s' },
-  { time: '14:02:08', scope: 'pipeline', text: 'stage=tagging · 96 tagged · 0.4s' },
-  { time: '14:01:58', scope: 'storage', text: 'cache hit · 18/23 clips · 3.2 GB reused' },
-  { time: '14:01:52', scope: 'pipeline', text: 'stage=shots · 234 segments · 1.1s' },
-  { time: '14:01:44', scope: 'app', text: 'zeniconic · windows 11 24H2' },
-];
+/** The shipped bank, read from the catalogue rather than a hand-written list. */
+const bankTracks = availableTracks().map((track) => ({
+  id: track.id,
+  title: track.title,
+  detail: `${String(track.bpm)} bpm · ${String(Math.round(track.durationSec))} s`,
+  licence:
+    track.license.source === 'ai_generated'
+      ? 'Internal only'
+      : track.license.source === 'royalty_free'
+        ? 'Royalty free'
+        : 'User supplied',
+}));
+
+function diagnosticsFor(version: string): Array<{ label: string; value: string }> {
+  return [
+    { label: 'App', value: `Zeniconic ${version || 'unknown'}` },
+    ...models.map((model) => ({ label: model.role, value: model.id })),
+  ];
+}
 
 function ModelRow({ role, kind, id }: { role: string; kind: string; id: string }) {
   return (
@@ -46,18 +67,9 @@ function ModelRow({ role, kind, id }: { role: string; kind: string; id: string }
         <code className="settings__model-id">{id}</code>
         <span className="settings__model-check">
           <i aria-hidden="true" />
-          No test run yet
+          Pinned in models.json
         </span>
       </div>
-      <Button
-        size="sm"
-        variant="quiet"
-        disabled
-        title="Model tests are not available yet. Analysis will report the first failure."
-        aria-label={`Test ${role.toLowerCase()} model (not available yet)`}
-      >
-        Test
-      </Button>
     </div>
   );
 }
@@ -83,6 +95,64 @@ export function SettingsScreen({ dataDir }: ScreenProps) {
   const [voiceChoiceError, setVoiceChoiceError] = useState<string | undefined>();
   const [playError, setPlayError] = useState<string | undefined>();
   const [playingVoice, setPlayingVoice] = useState<string | null>(null);
+  const [tagOnAnalyse, setTagOnAnalyse] = useState(false);
+  const [musicTrack, setMusicTrack] = useState<string | undefined>();
+  const [musicPrompt, setMusicPrompt] = useState(
+    'A calm, warm instrumental bed for a luxury Dubai property video. Soft piano, gentle strings, no vocals.',
+  );
+  const [musicBusy, setMusicBusy] = useState(false);
+  const [musicError, setMusicError] = useState<string | undefined>();
+  const [musicNote, setMusicNote] = useState<string | undefined>();
+  const [tagBusy, setTagBusy] = useState(false);
+  const [tagError, setTagError] = useState<string | undefined>();
+
+  useEffect(() => {
+    let live = true;
+    api.settings
+      .get()
+      .then((snapshot) => {
+        if (!live) return;
+        setTagOnAnalyse(snapshot.tagOnAnalyse);
+        setMusicTrack(snapshot.musicTrack);
+      })
+      .catch(() => undefined);
+    return () => {
+      live = false;
+    };
+  }, []);
+
+  const generateMusic = async (): Promise<void> => {
+    if (musicBusy) return;
+    setMusicBusy(true);
+    setMusicError(undefined);
+    setMusicNote(undefined);
+    try {
+      const result = await api.music.generate(musicPrompt);
+      setMusicTrack(result.fileName);
+      setMusicNote(
+        `Generated ${result.fileName} (${result.durationSec.toFixed(1)}s, $${result.costUsd.toFixed(2)}). Exports use it now.`,
+      );
+    } catch (error) {
+      setMusicError(error instanceof Error ? error.message : 'The music could not be generated.');
+    } finally {
+      setMusicBusy(false);
+    }
+  };
+
+  const toggleTagging = async (): Promise<void> => {
+    if (tagBusy) return;
+    setTagBusy(true);
+    setTagError(undefined);
+    const next = !tagOnAnalyse;
+    try {
+      await api.settings.setTagging(next);
+      setTagOnAnalyse(next);
+    } catch (error) {
+      setTagError(error instanceof Error ? error.message : 'The setting could not be saved.');
+    } finally {
+      setTagBusy(false);
+    }
+  };
   const audioRef = useRef<HTMLAudioElement | null>(null);
 
   useEffect(() => {
@@ -239,6 +309,11 @@ export function SettingsScreen({ dataDir }: ScreenProps) {
   // invents a folder, a spend total or a version.
   const dataFolder = snapshot?.dataDir ?? dataDir;
   const spendUsed = snapshot?.spendUsd ?? 0;
+  const nextReset = new Intl.DateTimeFormat('en-GB', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric',
+  }).format(new Date(new Date().getFullYear(), new Date().getMonth() + 1, 1));
   const version = snapshot?.version ?? '';
   const spendPct = Math.min(100, Math.round((spendUsed / spendCap) * 100));
   const spendRows = [{ name: 'This machine', amount: spendUsed }];
@@ -306,7 +381,7 @@ export function SettingsScreen({ dataDir }: ScreenProps) {
       'zeniconic diagnostics',
       `version ${version || 'unknown'}`,
       `data folder ${dataFolder || 'unknown'}`,
-      ...logLines.map((line) => `${line.time} ${line.scope} ${line.text}`),
+      ...diagnostics.map((row) => `${row.label}: ${row.value}`),
     ].join('\n');
     try {
       await navigator.clipboard.writeText(report);
@@ -564,18 +639,87 @@ export function SettingsScreen({ dataDir }: ScreenProps) {
           </div>
         </Card>
 
+        <Card className="settings__card settings__card--music">
+          <div className="settings__card-head">
+            <h2>Music bed</h2>
+            <span className="settings__meta">Lyria 3 Pro · $0.08 per song</span>
+          </div>
+          <div className="settings__body">
+            <p className="settings__note">
+              Current: {musicTrack ?? 'the bundled catchy bed'}. Generation uses your OpenRouter key,
+              writes an MP3 into the app music folder and selects it for every new export.
+            </p>
+            <label htmlFor="music-prompt" className="settings__sronly">
+              Music prompt
+            </label>
+            <textarea
+              id="music-prompt"
+              value={musicPrompt}
+              onChange={(event) => setMusicPrompt(event.target.value)}
+              rows={3}
+              disabled={musicBusy}
+              style={{ width: '100%', marginTop: 10, padding: 10, borderRadius: 10, border: '1px solid var(--border, #ccc)' }}
+            />
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' }}>
+              <Button variant="primary" onClick={() => void generateMusic()} disabled={musicBusy || musicPrompt.trim().length < 5}>
+                {musicBusy ? 'Generating (about 30s).' : 'Generate music bed'}
+              </Button>
+              <span className="settings__note">One song per click; the price is confirmed in Settings → Spend.</span>
+            </div>
+            {musicError === undefined ? null : (
+              <p role="alert" className="settings__note" style={{ color: 'var(--danger-text)', marginTop: 8 }}>
+                {musicError}
+              </p>
+            )}
+            {musicNote === undefined ? null : (
+              <p role="status" className="settings__note" style={{ marginTop: 8 }}>
+                {musicNote}
+              </p>
+            )}
+          </div>
+        </Card>
+
+        <Card className="settings__card settings__card--tagging">
+          <div className="settings__card-head">
+            <h2>AI shot tagging</h2>
+            <span className="settings__meta">Capped at $0.25 per batch</span>
+          </div>
+          <div className="settings__body">
+            <p className="settings__note">
+              Names each shot's room, camera move, selling points and defects after analysis. The
+              batch is priced before it runs; anything over the cap is skipped, and the result is
+              written to the listing for Shot review and the assistant.
+            </p>
+            <div style={{ display: 'flex', gap: 12, alignItems: 'center', marginTop: 12 }}>
+              <Button
+                variant={tagOnAnalyse ? 'primary' : 'secondary'}
+                onClick={() => void toggleTagging()}
+                disabled={tagBusy}
+              >
+                {tagBusy ? 'Saving.' : tagOnAnalyse ? 'Tagging on' : 'Tagging off'}
+              </Button>
+              <span className="settings__note">Runs automatically at the end of analysis.</span>
+            </div>
+            {tagError === undefined ? null : (
+              <p className="settings__note" role="alert" style={{ color: 'var(--danger-text)', marginTop: 8 }}>
+                {tagError}
+              </p>
+            )}
+          </div>
+        </Card>
+
         <Card className="settings__card settings__card--models">
           <div className="settings__card-head">
             <h2>Models</h2>
-            <span className="settings__meta">3 pinned · no auto-updates</span>
+            <span className="settings__meta">{models.length} pinned · no auto-updates</span>
           </div>
           <div className="settings__body">
             {models.map((model) => (
               <ModelRow key={model.id} role={model.role} kind={model.kind} id={model.id} />
             ))}
             <p className="settings__note">
-              IDs are pinned. If a test fails, analysis stops rather than falling back to another
-              model.
+              IDs are pinned in models.json. A capability or provider failure is reported by the
+              run that hits it; the app never silently substitutes a different model mid-run.
             </p>
           </div>
         </Card>
@@ -583,7 +727,7 @@ export function SettingsScreen({ dataDir }: ScreenProps) {
         <Card className="settings__card settings__card--spend">
           <div className="settings__card-head">
             <h2>Spending</h2>
-            <span className="settings__meta">Resets 1 Dec 2026</span>
+            <span className="settings__meta">Resets {nextReset}</span>
           </div>
           <div className="settings__body">
             <div className="settings__spend-top">
@@ -616,7 +760,7 @@ export function SettingsScreen({ dataDir }: ScreenProps) {
           </div>
           <div className="settings__body">
             <div className="settings__brand">
-              <div className="settings__logo" aria-label="Ashgrove and Co logo">
+              <div className="settings__logo" aria-label="Sample agency mark">
                 A&amp;C
               </div>
               <div className="settings__type">
@@ -647,7 +791,8 @@ export function SettingsScreen({ dataDir }: ScreenProps) {
               </div>
             </div>
             <p className="settings__note">
-              The closing card uses this logo, these two faces and the brass rule.
+              The closing card uses the listing's <code>brand.json</code> when present; otherwise
+              this sample mark, the two bundled faces and the brass rule.
             </p>
           </div>
         </Card>
@@ -655,21 +800,21 @@ export function SettingsScreen({ dataDir }: ScreenProps) {
         <Card className="settings__card settings__card--music">
           <div className="settings__card-head">
             <h2>Music bank</h2>
-            <span className="settings__meta">2 available · not client-cleared</span>
+            <span className="settings__meta">{bankTracks.length} available · not client-cleared</span>
           </div>
           <div className="settings__body settings__body--flush">
-            {moods.map((mood) => (
-              <div className="settings__music-row" key={mood.name}>
+            {bankTracks.map((track) => (
+              <div className="settings__music-row" key={track.id}>
                 <span className="settings__music-icon" aria-hidden="true">
                   <Icon name="music" size={13} />
                 </span>
                 <div className="settings__mood">
-                  <b>{mood.name}</b>
-                  <span>
-                    {mood.tracks} tracks · {mood.tempo}
-                  </span>
+                  <b>{track.title}</b>
+                  <span>{track.detail}</span>
                 </div>
-                <Badge tone={mood.licence === 'Licensed' ? 'ok' : 'warn'}>{mood.licence}</Badge>
+                <Badge tone={track.licence === 'Internal only' ? 'warn' : 'ok'}>
+                  {track.licence}
+                </Badge>
               </div>
             ))}
             <p className="settings__note">
@@ -729,25 +874,22 @@ export function SettingsScreen({ dataDir }: ScreenProps) {
         <Card className="settings__card settings__card--diag">
           <div className="settings__card-head">
             <h2>Diagnostics</h2>
-            <span className="settings__meta">
-              Example lines · no footage or addresses included
-            </span>
+            <span className="settings__meta">Local build and model IDs</span>
           </div>
           <div className="settings__body">
             <div className="settings__diag">
-              <div className="settings__log" role="log" aria-label="Example application log">
-                {logLines.map((line) => (
-                  <div className="settings__log-row" key={`${line.time}-${line.scope}`}>
-                    <span className="settings__log-time">{line.time}</span>
-                    <span className="settings__log-scope">{line.scope}</span>
-                    <span className="settings__log-text">{line.text}</span>
+              <div className="settings__log" role="list" aria-label="Local build and model IDs">
+                {diagnosticsFor(version).map((row) => (
+                  <div className="settings__log-row" key={row.label}>
+                    <span className="settings__log-scope">{row.label}</span>
+                    <span className="settings__log-text">{row.value}</span>
                   </div>
                 ))}
               </div>
 
               <div className="settings__diag-side">
                 <p>
-                  Copy a report with versions, model IDs and the log tail. It contains no footage,
+                  Copy a report with versions, model IDs and the data folder. It contains no footage,
                   addresses or prices.
                 </p>
                 <Button

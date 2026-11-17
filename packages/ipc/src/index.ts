@@ -8,6 +8,11 @@
  */
 
 export type {
+  AgentEditDto,
+  AgentEventDto,
+  AgentRunRequest,
+  AgentRunResponse,
+  Autonomy,
   CaptionMode,
   Channel,
   ChatApplyRequest,
@@ -25,7 +30,18 @@ export type {
   JobProgressStatus,
   KeyStatus,
   OpenPathResult,
+  ReferenceProfileDto,
+  RemixPreset,
+  RemixSlotDto,
+  RemixStoryboardDto,
+  RemixTranscriptionDto,
+  RenderInspectionDto,
+  MusicGenerationDto,
+  RefinePreviewDto,
   SettingsSnapshot,
+  ShotRow,
+  TaggingEstimateDto,
+  TaggingRunDto,
   Theme,
   VariantLook,
   VariantPreview,
@@ -36,17 +52,24 @@ export type {
   VoiceOption,
 } from './contract';
 
-export { CHANNELS, JOB_PROGRESS_CHANNEL, isChannel } from './contract';
+export { CHANNELS, JOB_PROGRESS_CHANNEL, AGENT_EVENT_CHANNEL, isChannel } from './contract';
 
 export { createHandlers, IpcError } from './handlers';
 export type {
+  AgentPort,
   ChatPort,
   HandlerDeps,
   IpcErrorCode,
   PipelinePort,
+  ReferencePort,
+  RemixPort,
+  ReviewPort,
+  MusicPort,
   RunnerPort,
   SettingsPortLike,
+  SpendPort,
   StorePort,
+  TaggingPort,
   VoiceGalleryPort,
   VoiceModelPort,
 } from './handlers';

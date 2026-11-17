@@ -24,7 +24,7 @@ export type CaptionMode = 'off' | 'burned' | 'srt' | 'both';
 export type VoiceMode = 'restore' | 'ai' | 'music';
 
 /** The three creative directions planned after analysis. */
-export type VariantLook = 'calm' | 'walkthrough' | 'social';
+export type VariantLook = 'calm' | 'walkthrough' | 'social' | 'marketing';
 
 /**
  * One planned variant, as persisted under
@@ -48,6 +48,22 @@ export interface VariantSummary {
 export interface VariantPreview {
   /** Absolute path to a single 1080-wide preview frame. */
   stillPath: string;
+}
+
+/** One indexed shot, as the review screen needs it. */
+export interface ShotRow {
+  shotId: string;
+  sourceId: string;
+  room: string;
+  startSec: number;
+  endSec: number;
+  durationSec: number;
+  /** 0..1 measured/tagged quality. */
+  score?: number;
+  src?: string;
+  sellingPoints?: string[];
+  defects?: string[];
+  reason?: string;
 }
 
 export interface ExportRequest {
@@ -92,6 +108,117 @@ export interface SettingsSnapshot {
   version: string;
   /** Model spend recorded for this machine, in USD. */
   spendUsd: number;
+  /** Run vision tagging at the end of analysis. */
+  tagOnAnalyse: boolean;
+  /** Selected bed under the app music folder; absent = bundled bed. */
+  musicTrack?: string;
+}
+
+/** Pre-flight price of tagging the persisted shots for one listing. */
+export interface TaggingEstimateDto {
+  shots: number;
+  /** Estimated USD for this batch. */
+  usd: number;
+  model: string;
+  /** The per-batch cap the pipeline enforces. */
+  capUsd: number;
+  /** Shots that already carry tags. */
+  tagged: number;
+}
+
+export type TaggingRunDto = {
+  shots: number;
+  tagged: number;
+  failed: number;
+  /** Provider-reported cost, or the estimate when none was reported. */
+  costUsd: number;
+  estimatedUsd: number;
+  model: string;
+};
+
+export type RemixPreset = 'marketing' | 'original' | 'price_led';
+
+export interface RemixSlotDto {
+  order: number;
+  beat: string;
+  shotId: string;
+  room: string;
+  inSec: number;
+  outSec: number;
+  targetSec: number;
+  reason: string;
+}
+
+/** What transcription cost and where the number came from. */
+export interface RemixTranscriptionDto {
+  words: number;
+  durationSec: number;
+  costUsd?: number;
+  /** `provider` = reported by OpenRouter; `estimated` = configured rate applied. */
+  costSource: 'provider' | 'estimated' | 'unreported';
+  model: string;
+  recordedAt: string;
+}
+
+export interface RemixStoryboardDto {
+  fileName: string;
+  analyzedAt: string;
+  durationSec: number;
+  fps: number;
+  orientation: 'portrait' | 'landscape' | 'square';
+  shots: Array<{ shotId: string; startSec: number; endSec: number; durationSec: number }>;
+  presets: Record<RemixPreset, RemixSlotDto[]>;
+  warnings: string[];
+  /** Number of transcript words available for captions. */
+  words?: number;
+  /** Room per imported shot, after `remix:retag`. */
+  rooms?: Record<string, string>;
+  /** Saved manual order per preset, as shot ids. */
+  orders?: Partial<Record<RemixPreset, string[]>>;
+  /** Preset the current `remix` variant was built from. */
+  activePreset?: RemixPreset;
+  /** Transcription cost/status for the last analysis. */
+  transcription?: RemixTranscriptionDto;
+}
+
+export interface RenderInspectionDto {  verdict: 'pass' | 'retry' | 'fail';
+  score: number;
+  summary: string;
+  issues: Array<{
+    issue: string;
+    severity: 'low' | 'medium' | 'high';
+    atSec: number;
+    detail: string;
+  }>;
+  model: string;
+  costUsd: number;
+  frames: number[];
+}
+
+export interface MusicGenerationDto {
+  /** Bare file name under `<data>/assets/music`. */
+  fileName: string;
+  durationSec: number;
+  costUsd: number;
+  model: string;
+  bytes: number;
+}
+
+/** A reference-video style profile, as shown in the UI and used by the agent. */
+export interface ReferenceProfileDto {
+  analyzedAt: string;
+  /** Basename only; the renderer never receives an absolute path. */
+  fileName: string;
+  profile: {
+    pacing?: string;
+    aspect?: string;
+    motion?: string;
+    averageShotSec?: number;
+    cutDensityPerMin?: number;
+    palette?: string[];
+    confidence?: number;
+    style?: Record<string, string>;
+  };
 }
 
 /** One voice card in Settings. Paths never cross the bridge. */
@@ -151,6 +278,50 @@ export interface ChatVersion {
   summary: string;
 }
 
+/** How much the agent may do without asking. */
+export type Autonomy = 'suggest' | 'ask' | 'auto';
+
+export interface AgentRunRequest {
+  listingId: string;
+  variantId: string;
+  message: string;
+  autonomy?: Autonomy;
+}
+
+export interface AgentEditDto {
+  capability: string;
+  summary: string;
+  risk: string;
+}
+
+/** A playable draft of the current variant. The URL is scheme-based, not a path. */
+export interface RefinePreviewDto {
+  previewUrl: string;
+  /** Render warnings, e.g. a missing font or music bed. */
+  warning?: string;
+}
+
+export interface AgentRunResponse {
+  ok: boolean;
+  /** Correlates the response with `agent:event` progress and `agent:approve`. */
+  runId?: string;
+  reply: string;
+  diff?: string;
+  versionId?: string;
+  /** True when the version was made current for export. */
+  applied?: boolean;
+  warnings: string[];
+  edits: AgentEditDto[];
+  costUsd: number;
+  steps: number;
+  /**
+   * Scheme URL for the latest draft preview (`zeniconic-media://preview/…`).
+   * Never an absolute filesystem path.
+   */
+  previewUrl?: string;
+  error?: string;
+}
+
 /** Lifecycle of the optional Kokoro voice model download. */
 export type VoiceModelPhase = 'missing' | 'downloading' | 'verifying' | 'ready' | 'error';
 
@@ -180,8 +351,46 @@ export interface IpcContract {
     facts: Partial<Facts>;
   }) => Promise<ListingRecord>;
   'analysis:chooseFolder': () => Promise<string | null>;
+  /** Native picker for a reference video. */
+  'dialog:chooseReference': () => Promise<string | null>;
+  /** Analyse a local reference and persist its style profile. */
+  'reference:analyze': (input: { listingId: string; path: string }) => Promise<ReferenceProfileDto>;
+  'reference:get': (listingId: string) => Promise<ReferenceProfileDto | null>;
+  'reference:clear': (listingId: string) => Promise<void>;
+  /** Native picker for a finished video to remix. */
+  'dialog:chooseRemix': () => Promise<string | null>;
+  /** Split a finished video into scenes and propose preset orders. */
+  'remix:analyze': (input: { listingId: string; file: string; transcribe?: boolean }) => Promise<RemixStoryboardDto>;
+  'remix:get': (listingId: string) => Promise<RemixStoryboardDto | null>;
+  /** Turn one preset into the `remix` variant. */
+  'remix:create': (input: { listingId: string; preset: RemixPreset }) => Promise<VariantSummary>;
+  /** Persist a manual slot order for one preset; `order` names every slot once. */
+  'remix:reorder': (input: {
+    listingId: string;
+    preset: RemixPreset;
+    order: string[];
+  }) => Promise<RemixStoryboardDto>;
+  /** Set the room for one imported shot from the EDL vocabulary. */
+  'remix:retag': (input: {
+    listingId: string;
+    shotId: string;
+    room: string;
+  }) => Promise<RemixStoryboardDto>;
+  /** Ask a multimodal model to inspect a finished export. */
+  'review:inspect': (input: {
+    file: string;
+    facts?: Record<string, string | number | undefined>;
+  }) => Promise<RenderInspectionDto>;
+  /** Generate a music bed with an audio-output model (Lyria). */
+  'music:generate': (prompt: string) => Promise<MusicGenerationDto>;
   'analysis:start': (input: { listingId: string; folder: string }) => Promise<{ jobId: string }>;
   'variants:list': (listingId: string) => Promise<VariantSummary[]>;
+  /** The persisted shot index; empty before analysis. */
+  'shots:list': (listingId: string) => Promise<ShotRow[]>;
+  /** Price the vision pass for the persisted shots. */
+  'tagging:estimate': (listingId: string) => Promise<TaggingEstimateDto>;
+  /** Run the vision pass now and write the tagged index. */
+  'tagging:start': (listingId: string) => Promise<TaggingRunDto>;
   'variants:approve': (input: {
     listingId: string;
     variantId: string;
@@ -195,9 +404,19 @@ export interface IpcContract {
   'chat:send': (input: ChatSendRequest) => Promise<ChatResult>;
   'chat:apply': (input: ChatApplyRequest) => Promise<ChatApplyResult>;
   'chat:versions': (listingId: string, variantId: string) => Promise<ChatVersion[]>;
+  /** The agent edits a draft, validates it, and commits a version. */
+  'agent:run': (input: AgentRunRequest) => Promise<AgentRunResponse>;
+  /** Resolve a pending approval for a running agent. */
+  'agent:approve': (input: { runId: string; approved: boolean }) => Promise<{ ok: boolean }>;
+  /** Render the current variant as a low-resolution draft for playback. */
+  'refine:preview': (input: {
+    listingId: string;
+    variantId: string;
+  }) => Promise<RefinePreviewDto>;
   'export:start': (input: ExportRequest) => Promise<ExportResult>;
   'settings:get': () => Promise<SettingsSnapshot>;
   'settings:setTheme': (theme: Theme) => Promise<void>;
+  'settings:setTagging': (enabled: boolean) => Promise<void>;
   'settings:setKey': (key: string) => Promise<void>;
   'settings:keyStatus': () => Promise<KeyStatus>;
   /** The catalogue plus bundled `data:` previews; no paths or keys. */
@@ -240,6 +459,27 @@ export interface JobProgressEvent {
 /** The event channel preload subscribes to. Not a request channel. */
 export const JOB_PROGRESS_CHANNEL = 'job:progress';
 
+/** Live agent activity, including approval requests. */
+export const AGENT_EVENT_CHANNEL = 'agent:event';
+
+export interface AgentEventDto {
+  runId: string;
+  type:
+    | 'understood'
+    | 'thinking'
+    | 'tool_start'
+    | 'tool_result'
+    | 'approval_required'
+    | 'warning'
+    | 'done'
+    | 'error';
+  /** Plain text for the UI; never chain-of-thought. */
+  message: string;
+  tool?: string;
+  ok?: boolean;
+  data?: unknown;
+}
+
 /**
  * Every request channel, in one place. `isChannel` is the allow-list the
  * preload uses before calling `ipcRenderer.invoke`.
@@ -250,17 +490,36 @@ export const CHANNELS: readonly Channel[] = [
   'listings:get',
   'listings:updateFacts',
   'analysis:chooseFolder',
+  'dialog:chooseReference',
+  'reference:analyze',
+  'reference:get',
+  'reference:clear',
+  'dialog:chooseRemix',
+  'remix:analyze',
+  'remix:get',
+  'remix:create',
+  'remix:reorder',
+  'remix:retag',
+  'review:inspect',
+  'music:generate',
   'analysis:start',
   'variants:list',
+  'shots:list',
+  'tagging:estimate',
+  'tagging:start',
   'variants:approve',
   'variants:preview',
   'jobs:list',
   'chat:send',
   'chat:apply',
   'chat:versions',
+  'agent:run',
+  'agent:approve',
+  'refine:preview',
   'export:start',
   'settings:get',
   'settings:setTheme',
+  'settings:setTagging',
   'settings:setKey',
   'settings:keyStatus',
   'voice:list',

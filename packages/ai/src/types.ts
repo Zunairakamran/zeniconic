@@ -8,9 +8,41 @@ export type ChatContentPart =
   | { type: 'text'; text: string }
   | { type: 'image_url'; image_url: { url: string } };
 
+export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
+
+/** A function the model may call, in the provider's native tool format. */
+export interface ToolDefinition {
+  type: 'function';
+  function: {
+    name: string;
+    description?: string;
+    /** JSON Schema for the call arguments, validated by `parseToolArguments`. */
+    parameters: object;
+  };
+}
+
+/** One call the model requested. `arguments` is the raw JSON string, unparsed. */
+export interface ToolCall {
+  id: string;
+  name: string;
+  arguments: string;
+}
+
+export type ToolChoice =
+  | 'auto'
+  | 'none'
+  | 'required'
+  | { type: 'function'; function: { name: string } };
+
 export interface ChatMessage {
-  role: 'system' | 'user' | 'assistant';
+  role: ChatRole;
   content: string | ChatContentPart[];
+  /** Assistant turns: the calls the model asked for, echoed back on the next request. */
+  toolCalls?: ToolCall[];
+  /** Tool turns only: the `ToolCall.id` this message answers. */
+  toolCallId?: string;
+  /** Tool turns only: the tool name, echoed for providers that expect it. */
+  name?: string;
 }
 
 export interface ChatRequest {
@@ -20,6 +52,10 @@ export interface ChatRequest {
   maxTokens?: number;
   /** When present, the reply must be valid JSON matching this JSON Schema. */
   jsonSchema?: object;
+  /** Native function tools. Sent only when non-empty. */
+  tools?: ToolDefinition[];
+  /** Sent only when supplied; never inferred from `tools`. */
+  toolChoice?: ToolChoice;
   timeoutMs?: number;
 }
 
@@ -31,6 +67,10 @@ export interface Usage {
 export interface ChatResponse {
   text: string;
   json?: unknown;
+  /** Tool calls requested by the assistant, in provider order. */
+  toolCalls?: ToolCall[];
+  /** `choices[0].finish_reason`, e.g. `stop` or `tool_calls`. */
+  finishReason?: string;
   usage: Usage;
   /** Net cost after the provider's cache discount, rounded to 6 dp. */
   costUsd: number;
@@ -77,6 +117,7 @@ export type AiErrorCode =
   | 'E_NETWORK'
   | 'E_JSON'
   | 'E_BUDGET'
+  | 'E_MODEL_CAPABILITY'
   | 'E_UNKNOWN_MODEL';
 
 export interface AiErrorOptions {

@@ -7,6 +7,7 @@ import {
   captionAnchorStyle,
   captionBottomInset,
   captionEntrance,
+  captionMotionTransform,
   captionPlateStyle,
   captionRuleStyle,
   captionTextStyle,
@@ -15,6 +16,7 @@ import {
 } from '../src/captions';
 import { DISPLAY_FONT, UI_FONT } from '../src/theme';
 import { RTL_FALLBACK_STACK } from '../../../packages/overlays/src/index';
+import { captionEntrance as overlayCaptionEntrance } from '../../../packages/overlays/src/captions';
 import {
   CAPTION_MAX_CHARS,
   CAPTION_MAX_LINES,
@@ -295,13 +297,52 @@ describe('captionEntrance', () => {
   });
 });
 
+describe('captionMotionTransform', () => {
+  it('is the identity pose once settled, as before the slide existed', () => {
+    expect(captionMotionTransform({ translateX: 0, translateY: 0, scale: 1 }, false)).toBe(
+      'translate3d(0px, 0px, 0) scale(1.000)',
+    );
+    expect(captionMotionTransform({ translateX: 0, translateY: 0, scale: 1 }, true)).toBe(
+      'translate3d(0px, 0px, 0) scale(1.000)',
+    );
+  });
+
+  it('draws slide_in horizontally, in from the leading edge', () => {
+    // LTR reads left to right, so the type starts left of rest and slides in.
+    expect(captionMotionTransform({ translateX: 32, translateY: 0, scale: 1 }, false)).toBe(
+      'translate3d(-32px, 0px, 0) scale(1.000)',
+    );
+    // A rise keeps its own axis and no horizontal travel.
+    expect(captionMotionTransform({ translateX: 0, translateY: 6, scale: 1 }, false)).toBe(
+      'translate3d(0px, 6px, 0) scale(1.000)',
+    );
+  });
+
+  it('mirrors the horizontal push for RTL so it comes from the reading edge', () => {
+    expect(captionMotionTransform({ translateX: 32, translateY: 0, scale: 1 }, true)).toBe(
+      'translate3d(32px, 0px, 0) scale(1.000)',
+    );
+  });
+
+  it('matches the entrance state the overlay package computes', () => {
+    // One cue-relative frame, 1080-wide canvas: the numbers the layer draws.
+    // (The four-argument helper above is the legacy block entrance.)
+    const state = overlayCaptionEntrance('slide_in', 0, 30, { scale: 1 });
+    expect(captionMotionTransform(state, false)).toBe('translate3d(-32px, 0px, 0) scale(1.000)');
+    expect(captionMotionTransform(state, true)).toBe('translate3d(32px, 0px, 0) scale(1.000)');
+    expect(
+      overlayCaptionEntrance('slide_in', 0, 30, { scale: 1, reduceMotion: true }).translateX,
+    ).toBe(0);
+  });
+});
+
 describe('no three-line cues', () => {
-  it('splits long speech into at most two lines of 28 characters', () => {
+  it('splits long speech into at most two lines of 20 characters', () => {
     const text =
       'Fully furnished three bedroom apartment with a private balcony and a marina view ready to move in today';
     const cues = captionCues(documentWith(wordsOf(text)), 30);
 
-    expect(CAPTION_MAX_CHARS).toBe(28);
+    expect(CAPTION_MAX_CHARS).toBe(20);
     expect(CAPTION_MAX_LINES).toBe(2);
     expect(cues.length).toBeGreaterThan(1);
 

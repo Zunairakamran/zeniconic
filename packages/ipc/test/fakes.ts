@@ -6,6 +6,8 @@
 import type { CreateListingInput, Facts, ListingRecord } from '@zeniconic/store';
 import type { JobRecord, JobStatus, Stage } from '@zeniconic/jobs';
 import type {
+  AgentPort,
+  AgentRunResponse,
   CaptionMode,
   ChatApplyRequest,
   ChatApplyResult,
@@ -17,10 +19,21 @@ import type {
   ExportResult,
   KeyStatus,
   PipelinePort,
+  ReferencePort,
+  ReferenceProfileDto,
+  RemixPort,
+  RemixPreset,
+  RemixStoryboardDto,
+  RenderInspectionDto,
+  ReviewPort,
   RunnerPort,
   SettingsPortLike,
   SettingsSnapshot,
+  ShotRow,
   StorePort,
+  TaggingEstimateDto,
+  TaggingPort,
+  TaggingRunDto,
   Theme,
   VariantPreview,
   VariantSummary,
@@ -109,7 +122,10 @@ export class FakeRunner implements RunnerPort {
   finalStage: Stage = 'done';
   failure: string | undefined;
 
-  enqueue(listingId: string): JobRecord {
+  enqueue(
+    listingId: string,
+    options: { kind?: 'analysis' | 'export' | 'agent'; checkpoint?: string } = {},
+  ): JobRecord {
     this.enqueued.push(listingId);
     const job: JobRecord = {
       id: `job_${String(this.jobs.size + 1).padStart(4, '0')}_${listingId}`,
@@ -119,9 +135,23 @@ export class FakeRunner implements RunnerPort {
       attempts: 0,
       createdAt: NOW,
       updatedAt: NOW,
+      ...(options.kind === undefined ? {} : { kind: options.kind }),
+      ...(options.checkpoint === undefined ? {} : { checkpoint: options.checkpoint }),
     };
     this.jobs.set(job.id, job);
     return { ...job };
+  }
+
+  async setCheckpoint(jobId: string, checkpoint: string): Promise<JobRecord> {
+    const job = this.jobs.get(jobId);
+    if (job === undefined) throw new Error(`No job ${jobId}`);
+    job.checkpoint = checkpoint;
+    return { ...job };
+  }
+
+  cancel(jobId: string): void {
+    const job = this.jobs.get(jobId);
+    if (job !== undefined && job.status === 'queued') job.status = 'cancelled';
   }
 
   async run(jobId: string): Promise<JobRecord> {
@@ -175,6 +205,12 @@ export class FakePipeline implements PipelinePort {
     return this.variants;
   }
 
+  shots: ShotRow[] = [];
+
+  async listShots(_listingId: string): Promise<ShotRow[]> {
+    return this.shots;
+  }
+
   async approveVariant(input: {
     listingId: string;
     variantId: string;
@@ -221,6 +257,7 @@ export class FakeSettings implements SettingsPortLike {
   voiceId = 'matilda';
   version = '0.1.0';
   spendUsd = 1.84;
+  tagOnAnalyse = false;
 
   async get(): Promise<SettingsSnapshot> {
     return {
@@ -230,6 +267,7 @@ export class FakeSettings implements SettingsPortLike {
       voiceId: this.voiceId,
       version: this.version,
       spendUsd: this.spendUsd,
+      tagOnAnalyse: this.tagOnAnalyse,
     };
   }
 
@@ -285,5 +323,238 @@ export class FakeChat implements ChatPort {
     this.versionCalls.push({ listingId: _listingId, variantId: _variantId });
     if (this.failure !== undefined) throw this.failure;
     return this.versionList;
+  }
+}
+
+export class FakeAgent implements AgentPort {
+  readonly runs: Array<{
+    listingId: string;
+    variantId: string;
+    message: string;
+    autonomy?: 'suggest' | 'ask' | 'auto';
+  }> = [];
+  readonly approvals: Array<{ runId: string; approved: boolean }> = [];
+  result: AgentRunResponse & { previewPath?: string } = {
+    ok: true,
+    runId: 'agent_test_1',
+    reply: 'Made the opening warmer.',
+    diff: '1 change: grade',
+    versionId: 'calm-v2',
+    applied: true,
+    warnings: [],
+    edits: [{ capability: 'apply_grade', summary: 'Applied warm grade.', risk: 'low' }],
+    costUsd: 0.001,
+    steps: 2,
+  };
+  failure: Error | undefined;
+  approveResult = true;
+
+  async run(input: {
+    listingId: string;
+    variantId: string;
+    message: string;
+    autonomy?: 'suggest' | 'ask' | 'auto';
+  }): Promise<AgentRunResponse> {
+    this.runs.push(input);
+    if (this.failure !== undefined) throw this.failure;
+    return this.result;
+  }
+
+  approve(runId: string, approved: boolean): boolean {
+    this.approvals.push({ runId, approved });
+    return this.approveResult;
+  }
+}
+
+export class FakeTagging implements TaggingPort {
+  estimateResult: TaggingEstimateDto = {
+    shots: 9,
+    usd: 0.0144,
+    model: 'perceptron/perceptron-mk1.5',
+    capUsd: 0.25,
+    tagged: 0,
+  };
+  runResult: TaggingRunDto = {
+    shots: 9,
+    tagged: 9,
+    failed: 0,
+    costUsd: 0.014,
+    estimatedUsd: 0.0144,
+    model: 'perceptron/perceptron-mk1.5',
+  };
+  readonly estimates: string[] = [];
+  readonly runs: string[] = [];
+  failure: Error | undefined;
+
+  async estimate(listingId: string): Promise<TaggingEstimateDto> {
+    this.estimates.push(listingId);
+    if (this.failure !== undefined) throw this.failure;
+    return this.estimateResult;
+  }
+
+  async start(listingId: string): Promise<TaggingRunDto> {
+    this.runs.push(listingId);
+    if (this.failure !== undefined) throw this.failure;
+    return this.runResult;
+  }
+}
+
+export class FakeReference implements ReferencePort {
+  picked: string | null = 'C:/refs/luxury.mp4';
+  profile: ReferenceProfileDto = {
+    analyzedAt: '2026-11-17T10:00:00.000Z',
+    fileName: 'luxury.mp4',
+    profile: {
+      pacing: 'fast',
+      aspect: '9:16',
+      motion: 'medium',
+      averageShotSec: 2.1,
+      cutDensityPerMin: 28,
+      palette: ['#112233', '#445566', '#778899'],
+      confidence: 0.82,
+      style: { style: 'fast warm edit', transition_style: 'hard cuts' },
+    },
+  };
+  readonly analyzed: Array<{ listingId: string; file: string }> = [];
+  readonly cleared: string[] = [];
+  failure: Error | undefined;
+
+  async chooseFile(): Promise<string | null> {
+    return this.picked;
+  }
+
+  async analyze(listingId: string, file: string): Promise<ReferenceProfileDto> {
+    this.analyzed.push({ listingId, file });
+    if (this.failure !== undefined) throw this.failure;
+    return this.profile;
+  }
+
+  async get(): Promise<ReferenceProfileDto | null> {
+    if (this.failure !== undefined) throw this.failure;
+    return this.profile;
+  }
+
+  async clear(listingId: string): Promise<void> {
+    this.cleared.push(listingId);
+    if (this.failure !== undefined) throw this.failure;
+  }
+}
+
+export class FakeRemix implements RemixPort {
+  picked: string | null = 'C:/remix/cut.mp4';
+  storyboard: RemixStoryboardDto = {
+    fileName: 'cut.mp4',
+    analyzedAt: '2026-11-17T10:00:00.000Z',
+    durationSec: 30,
+    fps: 30,
+    orientation: 'portrait',
+    shots: [{ shotId: 'sh1', startSec: 0, endSec: 3, durationSec: 3 }],
+    presets: {
+      marketing: [
+        { order: 0, beat: 'hook', shotId: 'sh1', room: 'living', inSec: 0, outSec: 3, targetSec: 2.4, reason: 'Open on the light.' },
+      ],
+      original: [],
+      price_led: [],
+    },
+    warnings: [],
+  };
+  readonly analyzed: Array<{ listingId: string; file: string }> = [];
+  readonly created: Array<{ listingId: string; preset: string }> = [];
+  readonly reordered: Array<{ listingId: string; preset: string; order: string[] }> = [];
+  readonly retagged: Array<{ listingId: string; shotId: string; room: string }> = [];
+  failure: Error | undefined;
+
+  async chooseFile(): Promise<string | null> {
+    return this.picked;
+  }
+
+  async analyze(listingId: string, file: string, transcribe?: boolean): Promise<RemixStoryboardDto> {
+    this.analyzed.push({ listingId, file, ...(transcribe === undefined ? {} : { transcribe }) });
+    if (this.failure !== undefined) throw this.failure;
+    return this.storyboard;
+  }
+
+  async get(): Promise<RemixStoryboardDto | null> {
+    if (this.failure !== undefined) throw this.failure;
+    return this.storyboard;
+  }
+
+  async create(listingId: string, preset: RemixPreset): Promise<VariantSummary> {
+    this.created.push({ listingId, preset });
+    if (this.failure !== undefined) throw this.failure;
+    return {
+      id: 'remix',
+      look: 'social',
+      format: 'social_hook',
+      targetDurationSec: 30,
+      clipCount: 12,
+      score: 50,
+      edlPath: 'variants/remix.json',
+      approved: false,
+    };
+  }
+
+  async reorder(
+    listingId: string,
+    preset: RemixPreset,
+    order: string[],
+  ): Promise<RemixStoryboardDto> {
+    this.reordered.push({ listingId, preset, order });
+    if (this.failure !== undefined) throw this.failure;
+
+    const slots = order.map((shotId, index) => {
+      const found = this.storyboard.presets[preset].find((slot) => slot.shotId === shotId);
+      if (found === undefined) throw new Error(`Shot "${shotId}" is not part of this preset.`);
+      return { ...found, order: index };
+    });
+    this.storyboard = {
+      ...this.storyboard,
+      presets: { ...this.storyboard.presets, [preset]: slots },
+      orders: { ...this.storyboard.orders, [preset]: order },
+    };
+    return this.storyboard;
+  }
+
+  async retag(listingId: string, shotId: string, room: string): Promise<RemixStoryboardDto> {
+    this.retagged.push({ listingId, shotId, room });
+    if (this.failure !== undefined) throw this.failure;
+
+    const presets = { ...this.storyboard.presets };
+    for (const preset of Object.keys(presets) as RemixPreset[]) {
+      presets[preset] = presets[preset].map((slot) =>
+        slot.shotId === shotId ? { ...slot, room } : slot,
+      );
+    }
+    this.storyboard = {
+      ...this.storyboard,
+      presets,
+      rooms: { ...this.storyboard.rooms, [shotId]: room },
+    };
+    return this.storyboard;
+  }
+}
+
+export class FakeReview implements ReviewPort {
+  result: RenderInspectionDto = {
+    verdict: 'retry',
+    score: 0.62,
+    summary: 'Price card sits under the caption block.',
+    issues: [
+      { issue: 'price card low', severity: 'medium', atSec: 31.2, detail: 'Card under captions.' },
+    ],
+    model: 'google/gemini-4-hydrogen',
+    costUsd: 0.0021,
+    frames: [3, 9, 15, 22, 28, 34],
+  };
+  readonly calls: Array<{ file: string; facts?: Record<string, string | number | undefined> }> = [];
+  failure: Error | undefined;
+
+  async inspect(input: {
+    file: string;
+    facts?: Record<string, string | number | undefined>;
+  }): Promise<RenderInspectionDto> {
+    this.calls.push(input);
+    if (this.failure !== undefined) throw this.failure;
+    return this.result;
   }
 }

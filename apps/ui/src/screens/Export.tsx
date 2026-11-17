@@ -3,6 +3,7 @@ import type { CaptionMode, ExportQuality } from '../../../../packages/ipc/src/in
 import { api } from '../api';
 import { Badge, Button, Card, Icon, Progress } from '../ui';
 import type { ScreenProps } from '../types';
+import type { RenderInspectionDto } from '../../../packages/ipc/src/index';
 import './Export.css';
 
 type VoiceMode = 'restore' | 'ai' | 'music';
@@ -107,6 +108,9 @@ export function ExportScreen({
   const [exportDir, setExportDir] = useState<string | undefined>();
   const [openError, setOpenError] = useState<string | undefined>();
   const [error, setError] = useState<string | undefined>();
+  const [inspection, setInspection] = useState<RenderInspectionDto | undefined>();
+  const [inspecting, setInspecting] = useState(false);
+  const [inspectError, setInspectError] = useState<string | undefined>();
 
   const exportSet = variants.filter((variant) => variant.approved);
   const excluded = variants.filter((variant) => !exportSet.some((item) => item.id === variant.id));
@@ -115,7 +119,6 @@ export function ExportScreen({
     selectedProfiles.includes(PROFILE_BY_ASPECT[aspect.id] ?? ''),
   );
   const totalFiles = exportSet.length * selectedAspects.length;
-  const minutes = Math.max(1, Math.round(totalFiles * 1.5));
   const outputFolder = `${dataDir}\\listings\\${listing.id}\\exports`;
 
   // The main process emits `export_<listing>` progress while the promise is
@@ -132,6 +135,8 @@ export function ExportScreen({
     setFiles([]);
     setWarnings([]);
     setExportDir(undefined);
+    setInspection(undefined);
+    setInspectError(undefined);
     setPct(0);
     setPhase('rendering');
     try {
@@ -147,8 +152,30 @@ export function ExportScreen({
     }
   };
 
-  const openOutputFolder = async () => {
-    setOpenError(undefined);
+  const inspectExport = async (): Promise<void> => {
+    const file = files.find((entry) => entry.toLowerCase().endsWith('.mp4'));
+    if (file === undefined || inspecting) return;
+    setInspecting(true);
+    setInspectError(undefined);
+    try {
+      const result = await api.review.inspect({
+        file,
+        facts: {
+          address: listing.address,
+          ...(listing.price.length === 0 ? {} : { price: listing.price }),
+          ...(listing.beds > 0 ? { beds: listing.beds } : {}),
+          ...(listing.baths > 0 ? { baths: listing.baths } : {}),
+        },
+      });
+      setInspection(result);
+    } catch (failure) {
+      setInspectError(failure instanceof Error ? failure.message : 'The render could not be inspected.');
+    } finally {
+      setInspecting(false);
+    }
+  };
+
+  const openOutputFolder = async () => {    setOpenError(undefined);
     try {
       const result = await api.shell.openPath(exportDir ?? outputFolder);
       if (!result.ok) {
@@ -165,6 +192,8 @@ export function ExportScreen({
     setPct(0);
     setError(undefined);
     setOpenError(undefined);
+    setInspection(undefined);
+    setInspectError(undefined);
     setFiles([]);
     setWarnings([]);
     setExportDir(undefined);
@@ -506,6 +535,36 @@ export function ExportScreen({
                 {openError}
               </p>
             ) : null}
+            {files.some((entry) => entry.toLowerCase().endsWith('.mp4')) ? (
+              <div style={{ display: 'flex', gap: 10, alignItems: 'center', marginTop: 10, flexWrap: 'wrap' }}>
+                <Button size="sm" onClick={() => void inspectExport()} disabled={inspecting}>
+                  {inspecting ? 'Inspecting frames.' : 'Inspect with AI'}
+                </Button>
+                {inspection === undefined ? null : (
+                  <span role="status">
+                    {inspection.verdict} · {Math.round(inspection.score * 100)}% ·{' '}
+                    {inspection.issues.length} issue{inspection.issues.length === 1 ? '' : 's'}
+                  </span>
+                )}
+              </div>
+            ) : null}
+            {inspection === undefined ? null : (
+              <div style={{ marginTop: 8 }}>
+                <p style={{ margin: '0 0 4px' }}>{inspection.summary}</p>
+                <ul style={{ margin: 0, paddingLeft: 18 }}>
+                  {inspection.issues.map((issue) => (
+                    <li key={`${issue.issue}-${issue.atSec}`}>
+                      {issue.atSec.toFixed(1)}s · {issue.severity} · {issue.issue}: {issue.detail}
+                    </li>
+                  ))}
+                </ul>
+              </div>
+            )}
+            {inspectError === undefined ? null : (
+              <p role="alert" className="export__open-error">
+                {inspectError}
+              </p>
+            )}
           </div>
           <Button variant="primary" onClick={() => void openOutputFolder()}>
             Open folder
@@ -532,7 +591,7 @@ export function ExportScreen({
       <footer className="export__foot">
         <div className="export__price">
           <b>
-            {totalFiles} files · ~{minutes} min · $0.00
+            {totalFiles} files · rendered on this machine · spend is tracked in Settings
           </b>
           <span>
             {phase === 'done'

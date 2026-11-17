@@ -11,13 +11,15 @@
  */
 
 import { readdir, stat } from 'node:fs/promises';
-import { dirname, extname, resolve, sep } from 'node:path';
+import { basename, dirname, extname, resolve, sep } from 'node:path';
 import type { JobRecord } from '@zeniconic/jobs';
 import { isValidListingId } from '@zeniconic/store';
 import type { Facts, ListingRecord, Store } from '@zeniconic/store';
 import { PROFILES } from '@zeniconic/render';
 import { VOICE_CATALOG, isVoiceId } from '../../../services/voice/src/voices';
+import { REMIX_ROOMS, isRemixRoom } from '../../../services/remix/src/rooms';
 import type {
+  AgentRunResponse,
   CaptionMode,
   Channel,
   ChatApplyRequest,
@@ -30,7 +32,16 @@ import type {
   Handlers,
   IpcContract,
   KeyStatus,
+  ReferenceProfileDto,
+  RemixPreset,
+  RemixStoryboardDto,
+  RenderInspectionDto,
+  MusicGenerationDto,
+  RefinePreviewDto,
   SettingsSnapshot,
+  ShotRow,
+  TaggingEstimateDto,
+  TaggingRunDto,
   Theme,
   VariantPreview,
   VariantSummary,
@@ -44,9 +55,16 @@ export type StorePort = Pick<Store, 'list' | 'get' | 'create' | 'update'>;
 
 /** Minimal surface of `JobRunner`; both the real runner and fakes satisfy it. */
 export interface RunnerPort {
-  enqueue(listingId: string): JobRecord;
+  enqueue(
+    listingId: string,
+    options?: { kind?: 'analysis' | 'export' | 'agent'; checkpoint?: string },
+  ): JobRecord;
   run(jobId: string): Promise<JobRecord>;
   list(): JobRecord[];
+  /** Persist where a resumable job can find its source. */
+  setCheckpoint?(jobId: string, checkpoint: string): Promise<JobRecord>;
+  /** Abort a job that never started (e.g. failed validation after enqueue). */
+  cancel?(jobId: string): void;
 }
 
 /**
@@ -61,6 +79,8 @@ export interface PipelinePort {
   prepareAnalysis(input: { jobId: string; listingId: string; folder: string }): void;
   /** Reads the persisted variants for a listing; `[]` before analysis. */
   listVariants(listingId: string): Promise<VariantSummary[]>;
+  /** Reads the persisted shot index; `[]` before analysis. */
+  listShots(listingId: string): Promise<ShotRow[]>;
   /** Sets one variant's approval bit without touching its EDL. */
   approveVariant(input: {
     listingId: string;
@@ -85,6 +105,48 @@ export interface SettingsPortLike {
   setKey(key: string): Promise<void>;
   keyStatus(): Promise<KeyStatus>;
   setVoice(voiceId: string): Promise<void>;
+  setTagging?(enabled: boolean): Promise<void>;
+}
+
+/** Vision tagging on the persisted index. */
+export interface TaggingPort {
+  estimate(listingId: string): Promise<TaggingEstimateDto>;
+  start(listingId: string): Promise<TaggingRunDto>;
+}
+
+/** Reference-video analysis and its persisted profile. */
+export interface ReferencePort {
+  chooseFile(): Promise<string | null>;
+  analyze(listingId: string, file: string): Promise<ReferenceProfileDto>;
+  get(listingId: string): Promise<ReferenceProfileDto | null>;
+  clear(listingId: string): Promise<void>;
+}
+
+/** Remix analysis, manual editing and variant creation. */
+export interface RemixPort {
+  chooseFile(): Promise<string | null>;
+  analyze(listingId: string, file: string, transcribe?: boolean): Promise<RemixStoryboardDto>;
+  get(listingId: string): Promise<RemixStoryboardDto | null>;
+  create(listingId: string, preset: RemixPreset): Promise<VariantSummary>;
+  reorder(
+    listingId: string,
+    preset: RemixPreset,
+    order: string[],
+  ): Promise<RemixStoryboardDto>;
+  retag(listingId: string, shotId: string, room: string): Promise<RemixStoryboardDto>;
+}
+
+/** Multimodal inspection of a finished export. */
+export interface ReviewPort {
+  inspect(input: {
+    file: string;
+    facts?: Record<string, string | number | undefined>;
+  }): Promise<RenderInspectionDto>;
+}
+
+/** Music-bed generation (Lyria via OpenRouter). */
+export interface MusicPort {
+  generate(prompt: string): Promise<MusicGenerationDto>;
 }
 
 /**
@@ -97,6 +159,31 @@ export interface ChatPort {
   versions(listingId: string, variantId: string): Promise<ChatVersion[]>;
 }
 
+/** The editing agent port; the desktop adapter owns the model and commit. */
+export interface AgentPort {
+  run(input: {
+    listingId: string;
+    variantId: string;
+    message: string;
+    autonomy?: 'suggest' | 'ask' | 'auto';
+  }): Promise<AgentRunResponse & { previewPath?: string }>;
+  /** Resolve a pending approval; false when the run is unknown. */
+  approve(runId: string, approved: boolean): boolean;
+}
+
+/** Draft playback for the Refine stage; the desktop host owns the renderer. */
+export interface RefinePreviewPort {
+  preview(input: { listingId: string; variantId: string }): Promise<{
+    path?: string;
+    warning?: string;
+  }>;
+}
+
+/** Read-only spend source for `settings:get`. */
+export interface SpendPort {
+  summary(): Promise<{ monthUsd: number }>;
+}
+
 export interface HandlerDeps {
   store: StorePort;
   runner: RunnerPort;
@@ -104,16 +191,32 @@ export interface HandlerDeps {
   settings: SettingsPortLike;
   /** Refine assistant; absent in builds that ship without a model key. */
   chat?: ChatPort;
+  /** Agentic editor; absent in builds that ship without a model key. */
+  agent?: AgentPort;
   /** Native folder picker, injected by Electron; absent in tests. */
   chooseFolder?: () => Promise<string | null>;
   /** Absolute store root; `shell:openPath` refuses anything outside it. */
   dataDir?: string;
   /** Electron's `shell.openPath`; resolves to an error string, or '' on success. */
   openPath?: (path: string) => Promise<string>;
-  /** Optional Kokoro downloader; absent in browser builds and plain tests. */
+  /** Voice-model installer; absent in tests. */
   voiceModel?: VoiceModelPort;
   /** Bundled studio voice samples; absent returns metadata with no previews. */
   voiceGallery?: VoiceGalleryPort;
+  /** Persisted cost ledger; absent means the snapshot reports 0. */
+  spend?: SpendPort;
+  /** Vision tagging; absent disables estimate/start in this build. */
+  tagging?: TaggingPort;
+  /** Reference-video analysis; absent disables the reference card. */
+  reference?: ReferencePort;
+  /** Remix analysis; absent disables the Remix screen. */
+  remix?: RemixPort;
+  /** Render inspection; absent hides the Inspect control. */
+  review?: ReviewPort;
+  /** Music generation; absent hides the Generate control. */
+  music?: MusicPort;
+  /** Draft playback for Refine; absent leaves the stage mock only. */
+  refinePreview?: RefinePreviewPort;
 }
 
 /**
@@ -179,6 +282,17 @@ const MAX_PROFILES = 4;
 const MAX_VARIANT_ID_LENGTH = 64;
 const MAX_VERSION_ID_LENGTH = 80;
 const MAX_CHAT_MESSAGE_LENGTH = 2_000;
+
+/**
+ * A draft preview is served by the `zeniconic-media` scheme from the app's
+ * previews folder. The renderer only ever sees the bare file name.
+ */
+export function previewUrlFor(value: unknown): string | undefined {
+  if (typeof value !== 'string' || value.length === 0 || value.length > 260) return undefined;
+  const name = basename(value);
+  if (!/^[A-Za-z0-9][A-Za-z0-9._-]{0,119}\.mp4$/i.test(name)) return undefined;
+  return `zeniconic-media://preview/${encodeURIComponent(name)}`;
+}
 const MIN_KEY_LENGTH = 8;
 const MAX_KEY_LENGTH = 512;
 
@@ -280,11 +394,63 @@ function requireBoolean(value: unknown, label: string): boolean {
   return value;
 }
 
+const REMIX_PRESETS: readonly RemixPreset[] = ['marketing', 'original', 'price_led'];
+const MAX_REMIX_SLOTS = 200;
+const SHOT_ID_PATTERN = /^[a-z0-9][a-z0-9_-]{0,31}$/i;
+
+function requireRemixPreset(value: unknown): RemixPreset {
+  if (typeof value !== 'string' || !(REMIX_PRESETS as readonly string[]).includes(value)) {
+    throw invalid('Choose a remix preset.');
+  }
+  return value as RemixPreset;
+}
+
+function requireShotId(value: unknown): string {
+  if (typeof value !== 'string' || !SHOT_ID_PATTERN.test(value)) {
+    throw invalid('That scene id is not valid.');
+  }
+  return value;
+}
+
+/** A slot order must name every slot exactly once; the remix service enforces the set. */
+function requireRemixOrder(value: unknown): string[] {
+  if (!Array.isArray(value) || value.length === 0) {
+    throw invalid('A slot order needs at least one scene.');
+  }
+  if (value.length > MAX_REMIX_SLOTS) {
+    throw invalid(`At most ${MAX_REMIX_SLOTS} scenes can be ordered.`);
+  }
+
+  const order: string[] = [];
+  const seen = new Set<string>();
+  for (const item of value) {
+    const shotId = requireShotId(item);
+    if (seen.has(shotId)) throw invalid(`Scene "${shotId}" appears twice in the order.`);
+    seen.add(shotId);
+    order.push(shotId);
+  }
+  return order;
+}
+
+function requireRemixRoom(value: unknown): string {
+  if (!isRemixRoom(value)) {
+    throw invalid(`Choose a room: ${REMIX_ROOMS.join(', ')}.`);
+  }
+  return value;
+}
+
 function requireVoiceMode(value: unknown): VoiceMode {
   if (typeof value !== 'string' || !(VOICE_MODES as readonly string[]).includes(value)) {
     throw invalid('Voice must be restore, ai or music.');
   }
   return value as VoiceMode;
+}
+
+function requireAutonomy(value: unknown): 'suggest' | 'ask' | 'auto' {
+  if (value !== 'suggest' && value !== 'ask' && value !== 'auto') {
+    throw invalid('Autonomy must be suggest, ask or auto.');
+  }
+  return value;
 }
 
 function requireVoiceId(value: unknown): string {
@@ -556,6 +722,50 @@ async function viaChat<T>(task: () => Promise<T>): Promise<T> {
   }
 }
 
+/** Never let a port hand an absolute path to the renderer. */
+function sanitiseReferenceProfile(value: unknown): ReferenceProfileDto {
+  if (!isRecord(value) || typeof value.analyzedAt !== 'string' || typeof value.fileName !== 'string') {
+    throw new IpcError('E_PIPELINE', 'The reference analysis returned no profile.');
+  }
+  const profile = isRecord(value.profile) ? value.profile : {};
+  const text = (key: string): string | undefined =>
+    typeof profile[key] === 'string' ? (profile[key] as string).slice(0, 80) : undefined;
+  const palette = Array.isArray(profile.palette)
+    ? profile.palette
+        .filter((colour): colour is string => typeof colour === 'string' && /^#[0-9a-fA-F]{6}$/.test(colour))
+        .slice(0, 6)
+    : undefined;
+  const style = isRecord(profile.style)
+    ? Object.fromEntries(
+        Object.entries(profile.style)
+          .filter((entry): entry is [string, string] => typeof entry[1] === 'string')
+          .slice(0, 12)
+          .map(([key, value]) => [key, value.slice(0, 120)]),
+      )
+    : undefined;
+
+  return {
+    analyzedAt: value.analyzedAt.slice(0, 40),
+    fileName: value.fileName.slice(0, 120),
+    profile: {
+      ...(text('pacing') === undefined ? {} : { pacing: text('pacing') }),
+      ...(text('aspect') === undefined ? {} : { aspect: text('aspect') }),
+      ...(text('motion') === undefined ? {} : { motion: text('motion') }),
+      ...(typeof profile.averageShotSec === 'number' && Number.isFinite(profile.averageShotSec)
+        ? { averageShotSec: profile.averageShotSec }
+        : {}),
+      ...(typeof profile.cutDensityPerMin === 'number' && Number.isFinite(profile.cutDensityPerMin)
+        ? { cutDensityPerMin: profile.cutDensityPerMin }
+        : {}),
+      ...(typeof profile.confidence === 'number' && Number.isFinite(profile.confidence)
+        ? { confidence: profile.confidence }
+        : {}),
+      ...(palette === undefined ? {} : { palette }),
+      ...(style === undefined ? {} : { style }),
+    },
+  };
+}
+
 function requireChat(chat: ChatPort | undefined): ChatPort {
   if (chat === undefined) {
     throw new IpcError('E_PIPELINE', 'The editing assistant is not available in this build.');
@@ -593,7 +803,7 @@ function requireDataPath(value: unknown, root: string): string {
  * same object runs in `ipcMain` and in a Vitest process.
  */
 export function createHandlers(deps: HandlerDeps): Handlers {
-  const { store, runner, pipeline, settings, chat, chooseFolder, dataDir, openPath, voiceModel, voiceGallery } = deps;
+  const { store, runner, pipeline, settings, chat, agent, chooseFolder, dataDir, openPath, voiceModel, voiceGallery, spend, tagging, reference, remix, review, music, refinePreview } = deps;
 
   const handlers: Handlers = {
     'listings:list': async (): Promise<ListingRecord[]> => store.list(),
@@ -634,6 +844,192 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       return resolve(picked);
     },
 
+    'dialog:chooseReference': async (): Promise<string | null> => {
+      if (reference === undefined) return null;
+      const picked = await reference.chooseFile();
+      if (picked === null) return null;
+      if (typeof picked !== 'string' || picked.trim().length === 0) return null;
+      return resolve(picked);
+    },
+
+    'reference:analyze': async (input): Promise<ReferenceProfileDto> => {
+      const raw = requireObject(input, 'input');
+      const listingId = requireListingId(raw.listingId);
+      if (typeof raw.path !== 'string' || raw.path.trim().length === 0) {
+        throw invalid('Choose a reference video first.');
+      }
+      const file = raw.path.trim();
+      if (/[\u0000-\u001f\u007f]/.test(file) || /^https?:/i.test(file)) {
+        throw invalid('A reference must be a local video file.');
+      }
+      if (!VIDEO_EXTENSIONS.has(extname(file).toLowerCase())) {
+        throw invalid('That file is not a video.');
+      }
+      await requireListing(store, listingId);
+      if (reference === undefined) {
+        throw new IpcError('E_PIPELINE', 'Reference analysis is not available in this build.');
+      }
+      const profile = await reference.analyze(listingId, resolve(file));
+      return sanitiseReferenceProfile(profile);
+    },
+
+    'reference:get': async (listingId): Promise<ReferenceProfileDto | null> => {
+      const id = requireListingId(listingId);
+      await requireListing(store, id);
+      if (reference === undefined) return null;
+      const profile = await reference.get(id);
+      return profile === null ? null : sanitiseReferenceProfile(profile);
+    },
+
+    'reference:clear': async (listingId): Promise<void> => {
+      const id = requireListingId(listingId);
+      await requireListing(store, id);
+      if (reference === undefined) return;
+      await reference.clear(id);
+    },
+
+    'dialog:chooseRemix': async (): Promise<string | null> => {
+      if (remix === undefined) return null;
+      const picked = await remix.chooseFile();
+      if (picked === null) return null;
+      return typeof picked === 'string' && picked.trim().length > 0 ? resolve(picked) : null;
+    },
+
+    'remix:analyze': async (input): Promise<RemixStoryboardDto> => {
+      const raw = requireObject(input, 'input');
+      const listingId = requireListingId(raw.listingId);
+      if (typeof raw.file !== 'string' || raw.file.trim().length === 0) {
+        throw invalid('Choose a finished video first.');
+      }
+      const file = raw.file.trim();
+      if (/[\u0000-\u001f\u007f]/.test(file) || /^https?:/i.test(file)) {
+        throw invalid('A remix source must be a local video file.');
+      }
+      if (!VIDEO_EXTENSIONS.has(extname(file).toLowerCase())) {
+        throw invalid('That file is not a video.');
+      }
+      const transcribe = raw.transcribe === undefined ? undefined : requireBoolean(raw.transcribe, 'transcribe');
+      await requireListing(store, listingId);
+      if (remix === undefined) {
+        throw new IpcError('E_PIPELINE', 'Remix is not available in this build.');
+      }
+      const storyboard = await remix.analyze(listingId, resolve(file), transcribe);
+      if (!isRecord(storyboard) || !Array.isArray(storyboard.shots) || !isRecord(storyboard.presets)) {
+        throw new IpcError('E_PIPELINE', 'The remix analysis returned no storyboard.');
+      }
+      return storyboard;
+    },
+
+    'remix:get': async (listingId): Promise<RemixStoryboardDto | null> => {
+      const id = requireListingId(listingId);
+      await requireListing(store, id);
+      if (remix === undefined) return null;
+      return remix.get(id);
+    },
+
+    'remix:create': async (input): Promise<VariantSummary> => {
+      const raw = requireObject(input, 'input');
+      const listingId = requireListingId(raw.listingId);
+      const preset = raw.preset;
+      if (preset !== 'marketing' && preset !== 'original' && preset !== 'price_led') {
+        throw invalid('Choose a remix preset.');
+      }
+      await requireListing(store, listingId);
+      if (remix === undefined) {
+        throw new IpcError('E_PIPELINE', 'Remix is not available in this build.');
+      }
+      return remix.create(listingId, preset);
+    },
+
+    'remix:reorder': async (input): Promise<RemixStoryboardDto> => {
+      const raw = requireObject(input, 'input');
+      const listingId = requireListingId(raw.listingId);
+      const preset = requireRemixPreset(raw.preset);
+      const order = requireRemixOrder(raw.order);
+      await requireListing(store, listingId);
+      if (remix === undefined) {
+        throw new IpcError('E_PIPELINE', 'Remix is not available in this build.');
+      }
+      const storyboard = await remix.reorder(listingId, preset, order);
+      if (!isRecord(storyboard) || !Array.isArray(storyboard.shots)) {
+        throw new IpcError('E_PIPELINE', 'The reordered storyboard could not be read.');
+      }
+      return storyboard;
+    },
+
+    'remix:retag': async (input): Promise<RemixStoryboardDto> => {
+      const raw = requireObject(input, 'input');
+      const listingId = requireListingId(raw.listingId);
+      const shotId = requireShotId(raw.shotId);
+      const room = requireRemixRoom(raw.room);
+      await requireListing(store, listingId);
+      if (remix === undefined) {
+        throw new IpcError('E_PIPELINE', 'Remix is not available in this build.');
+      }
+      const storyboard = await remix.retag(listingId, shotId, room);
+      if (!isRecord(storyboard) || !isRecord(storyboard.presets)) {
+        throw new IpcError('E_PIPELINE', 'The tagged storyboard could not be read.');
+      }
+      return storyboard;
+    },
+
+    'review:inspect': async (input): Promise<RenderInspectionDto> => {
+      const raw = requireObject(input, 'input');
+      if (dataDir === undefined) {
+        throw new IpcError('E_PIPELINE', 'Render inspection is not available in this build.');
+      }
+      const file = requireDataPath(raw.file, dataDir);
+      if (extname(file).toLowerCase() !== '.mp4') {
+        throw invalid('Only exported .mp4 files can be inspected.');
+      }
+      if (review === undefined) {
+        throw new IpcError('E_PIPELINE', 'Render inspection is not available in this build.');
+      }
+
+      let facts: Record<string, string | number | undefined> | undefined;
+      if (raw.facts !== undefined) {
+        const patch = requireObject(raw.facts, 'facts');
+        facts = {};
+        for (const [key, value] of Object.entries(patch).slice(0, 20)) {
+          if (typeof value === 'string' || typeof value === 'number') facts[key.slice(0, 40)] = value;
+        }
+      }
+
+      const result = await review.inspect({ file, ...(facts === undefined ? {} : { facts }) });
+      if (!isRecord(result) || !Array.isArray(result.issues)) {
+        throw new IpcError('E_PIPELINE', 'The inspection returned no result.');
+      }
+      return {
+        verdict: result.verdict === 'pass' || result.verdict === 'fail' ? result.verdict : 'retry',
+        score: typeof result.score === 'number' && Number.isFinite(result.score) ? Math.min(1, Math.max(0, result.score)) : 0,
+        summary: typeof result.summary === 'string' ? result.summary.slice(0, 400) : '',
+        issues: result.issues
+          .filter(
+            (issue): issue is RenderInspectionDto['issues'][number] =>
+              isRecord(issue) &&
+              typeof issue.issue === 'string' &&
+              (issue.severity === 'low' || issue.severity === 'medium' || issue.severity === 'high') &&
+              typeof issue.atSec === 'number' &&
+              typeof issue.detail === 'string',
+          )
+          .slice(0, 12)
+          .map((issue) => ({
+            issue: issue.issue.slice(0, 120),
+            severity: issue.severity,
+            atSec: Math.max(0, issue.atSec),
+            detail: issue.detail.slice(0, 240),
+          })),
+        model: typeof result.model === 'string' ? result.model.slice(0, 120) : 'unknown',
+        costUsd:
+          typeof result.costUsd === 'number' && Number.isFinite(result.costUsd)
+            ? Math.max(0, result.costUsd)
+            : 0,
+        frames: Array.isArray(result.frames)
+          ? result.frames.filter((t): t is number => typeof t === 'number').slice(0, 12)
+          : [],
+      };
+    },
+
     'analysis:start': async (input): Promise<{ jobId: string }> => {
       const raw = requireObject(input, 'input');
       const listingId = requireListingId(raw.listingId);
@@ -643,10 +1039,18 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       // can only fail in the executor.
       await requireListing(store, listingId);
 
-      const job = runner.enqueue(listingId);
-      pipeline.prepareAnalysis({ jobId: job.id, listingId, folder });
-
-      await store.update(listingId, { status: 'analysing' });
+      const job = runner.enqueue(listingId, { kind: 'analysis', checkpoint: folder });
+      try {
+        pipeline.prepareAnalysis({ jobId: job.id, listingId, folder });
+        await store.update(listingId, { status: 'analysing' });
+      } catch (error) {
+        // A job queued before a failed preparation could only fail later, after
+        // the user has been told analysis started. Cancel it and fail here.
+        runner.cancel?.(job.id);
+        throw error instanceof IpcError
+          ? error
+          : new IpcError('E_PIPELINE', messageOf(error), { cause: error });
+      }
 
       // Analysis takes minutes; the contract returns as soon as the job is
       // queued. Failures are persisted on the listing and reported by the job.
@@ -681,6 +1085,84 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       const id = requireListingId(listingId);
       await requireListing(store, id);
       return pipeline.listVariants(id);
+    },
+
+    'shots:list': async (listingId): Promise<ShotRow[]> => {
+      const id = requireListingId(listingId);
+      await requireListing(store, id);
+      const rows = await pipeline.listShots(id);
+      if (!Array.isArray(rows)) {
+        throw new IpcError('E_PIPELINE', 'The shot index could not be read.');
+      }
+      return rows
+        .filter(
+          (row): row is ShotRow =>
+            isRecord(row) &&
+            typeof row.shotId === 'string' &&
+            typeof row.sourceId === 'string' &&
+            typeof row.room === 'string' &&
+            typeof row.startSec === 'number' &&
+            typeof row.endSec === 'number' &&
+            row.endSec > row.startSec,
+        )
+        .slice(0, 500)
+        .map((row) => ({
+          shotId: row.shotId.slice(0, 120),
+          sourceId: row.sourceId.slice(0, 120),
+          room: row.room.slice(0, 40),
+          startSec: row.startSec,
+          endSec: row.endSec,
+          durationSec: Math.max(0, (row.durationSec ?? row.endSec - row.startSec) | 0) || row.endSec - row.startSec,
+          ...(typeof row.score === 'number' && Number.isFinite(row.score) ? { score: row.score } : {}),
+          ...(typeof row.src === 'string' ? { src: row.src.slice(0, 500) } : {}),
+          ...(Array.isArray(row.sellingPoints) ? { sellingPoints: row.sellingPoints.filter((point): point is string => typeof point === 'string').slice(0, 8) } : {}),
+          ...(Array.isArray(row.defects) ? { defects: row.defects.filter((defect): defect is string => typeof defect === 'string').slice(0, 8) } : {}),
+          ...(typeof row.reason === 'string' ? { reason: row.reason.slice(0, 200) } : {}),
+        }));
+    },
+
+    'tagging:estimate': async (listingId): Promise<TaggingEstimateDto> => {
+      const id = requireListingId(listingId);
+      await requireListing(store, id);
+      if (tagging === undefined) {
+        throw new IpcError('E_PIPELINE', 'Vision tagging is not available in this build.');
+      }
+      const estimate = await tagging.estimate(id);
+      if (!isRecord(estimate) || typeof estimate.usd !== 'number' || !Number.isFinite(estimate.usd)) {
+        throw new IpcError('E_PIPELINE', 'The tagging estimate could not be read.');
+      }
+      return {
+        shots: Number.isInteger(estimate.shots) && estimate.shots >= 0 ? estimate.shots : 0,
+        usd: Math.max(0, estimate.usd),
+        model: typeof estimate.model === 'string' ? estimate.model.slice(0, 120) : 'unknown',
+        capUsd: typeof estimate.capUsd === 'number' && estimate.capUsd > 0 ? estimate.capUsd : 0.25,
+        tagged: Number.isInteger(estimate.tagged) && estimate.tagged >= 0 ? estimate.tagged : 0,
+      };
+    },
+
+    'tagging:start': async (listingId): Promise<TaggingRunDto> => {
+      const id = requireListingId(listingId);
+      await requireListing(store, id);
+      if (tagging === undefined) {
+        throw new IpcError('E_PIPELINE', 'Vision tagging is not available in this build.');
+      }
+      const run = await tagging.start(id);
+      if (!isRecord(run)) {
+        throw new IpcError('E_PIPELINE', 'The tagging run returned no result.');
+      }
+      const count = (value: unknown): number =>
+        typeof value === 'number' && Number.isInteger(value) && value >= 0 ? value : 0;
+      return {
+        shots: count(run.shots),
+        tagged: count(run.tagged),
+        failed: count(run.failed),
+        costUsd: typeof run.costUsd === 'number' && Number.isFinite(run.costUsd) ? Math.max(0, run.costUsd) : 0,
+        estimatedUsd:
+          typeof run.estimatedUsd === 'number' && Number.isFinite(run.estimatedUsd)
+            ? Math.max(0, run.estimatedUsd)
+            : 0,
+        model: typeof run.model === 'string' ? run.model.slice(0, 120) : 'unknown',
+      };
     },
 
     'variants:approve': async (input): Promise<VariantSummary> => {
@@ -778,6 +1260,127 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       );
     },
 
+    'agent:run': async (input): Promise<AgentRunResponse> => {
+      const raw = requireObject(input, 'input');
+      const listingId = requireListingId(raw.listingId);
+      const variantId = requireVariantId(raw.variantId);
+      const message = requireChatMessage(raw.message);
+      const autonomy = raw.autonomy === undefined ? undefined : requireAutonomy(raw.autonomy);
+      await requireListing(store, listingId);
+
+      if (agent === undefined) {
+        throw new IpcError('E_PIPELINE', 'The editing assistant is not available in this build.');
+      }
+
+      let result: AgentRunResponse;
+      try {
+        result = await agent.run({
+          listingId,
+          variantId,
+          message,
+          ...(autonomy === undefined ? {} : { autonomy }),
+        });
+      } catch (error) {
+        throw new IpcError('E_CHAT', messageOf(error), { cause: error });
+      }
+
+      if (!isRecord(result) || typeof result.ok !== 'boolean' || typeof result.reply !== 'string') {
+        throw new IpcError('E_CHAT', 'The assistant did not return a usable result.');
+      }
+
+      const warnings = Array.isArray(result.warnings)
+        ? result.warnings.filter(
+            (warning): warning is string => typeof warning === 'string' && warning.trim().length > 0,
+          )
+        : [];
+      const edits = Array.isArray(result.edits)
+        ? result.edits
+            .filter(
+              (edit): edit is { capability: string; summary: string; risk: string } =>
+                isRecord(edit) &&
+                typeof edit.capability === 'string' &&
+                typeof edit.summary === 'string' &&
+                typeof edit.risk === 'string',
+            )
+            .slice(0, 20)
+            .map((edit) => ({
+              capability: edit.capability.slice(0, 80),
+              summary: edit.summary.slice(0, 300),
+              risk: edit.risk.slice(0, 20),
+            }))
+        : [];
+      const versionId =
+        typeof result.versionId === 'string' &&
+        result.versionId.length <= MAX_VERSION_ID_LENGTH &&
+        VERSION_ID_PATTERN.test(result.versionId)
+          ? result.versionId
+          : undefined;
+      const previewUrl = previewUrlFor(result.previewPath);
+
+      return {
+        ok: result.ok,
+        runId: typeof result.runId === 'string' ? result.runId.slice(0, 80) : undefined,
+        reply: result.reply,
+        warnings,
+        edits,
+        costUsd:
+          typeof result.costUsd === 'number' && Number.isFinite(result.costUsd) && result.costUsd >= 0
+            ? result.costUsd
+            : 0,
+        steps:
+          typeof result.steps === 'number' && Number.isInteger(result.steps) && result.steps >= 0
+            ? result.steps
+            : 0,
+        ...(typeof result.diff === 'string' ? { diff: result.diff } : {}),
+        ...(versionId === undefined ? {} : { versionId }),
+        applied: result.applied === true,
+        ...(previewUrl === undefined ? {} : { previewUrl }),
+        ...(typeof result.error === 'string' ? { error: result.error } : {}),
+      };
+    },
+
+    'agent:approve': async (input): Promise<{ ok: boolean }> => {
+      const raw = requireObject(input, 'input');
+      const runId = raw.runId;
+      if (typeof runId !== 'string' || !/^agent_[a-z0-9_]{1,72}$/.test(runId)) {
+        throw invalid('That approval does not belong to a running agent.');
+      }
+      const approved = requireBoolean(raw.approved, 'approved');
+      if (agent === undefined) {
+        throw new IpcError('E_PIPELINE', 'The editing assistant is not available in this build.');
+      }
+      return { ok: agent.approve(runId, approved) };
+    },
+
+    'refine:preview': async (input): Promise<RefinePreviewDto> => {
+      const raw = requireObject(input, 'input');
+      const listingId = requireListingId(raw.listingId);
+      const variantId = requireVariantId(raw.variantId);
+      await requireListing(store, listingId);
+      if (refinePreview === undefined) {
+        throw new IpcError('E_PIPELINE', 'Draft previews are not available in this build.');
+      }
+      const result = await refinePreview.preview({ listingId, variantId });
+      if (!isRecord(result)) {
+        throw new IpcError('E_PIPELINE', 'The preview renderer returned no result.');
+      }
+      const previewUrl = previewUrlFor(result.path);
+      if (previewUrl === undefined) {
+        throw new IpcError(
+          'E_PIPELINE',
+          typeof result.warning === 'string' && result.warning.length > 0
+            ? result.warning
+            : 'The draft preview could not be rendered.',
+        );
+      }
+      return {
+        previewUrl,
+        ...(typeof result.warning === 'string' && result.warning.length > 0
+          ? { warning: result.warning.slice(0, 400) }
+          : {}),
+      };
+    },
+
     'export:start': async (input): Promise<ExportResult> => {
       const raw = requireObject(input, 'input');
       const listingId = requireListingId(raw.listingId);
@@ -825,10 +1428,61 @@ export function createHandlers(deps: HandlerDeps): Handlers {
         : { files, exportDir: exportedDir };
     },
 
-    'settings:get': async (): Promise<SettingsSnapshot> => settings.get(),
+    'music:generate': async (prompt): Promise<MusicGenerationDto> => {
+      if (typeof prompt !== 'string') throw invalid('Describe the music you want.');
+      const text = prompt.trim();
+      if (text.length < 5 || text.length > 600) {
+        throw invalid('Describe the music in 5–600 characters.');
+      }
+      if (/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/.test(text)) {
+        throw invalid('The music prompt must not contain control characters.');
+      }
+      if (music === undefined) {
+        throw new IpcError('E_PIPELINE', 'Music generation is not available in this build.');
+      }
+      const result = await music.generate(text);
+      if (!isRecord(result) || typeof result.fileName !== 'string') {
+        throw new IpcError('E_PIPELINE', 'The music model returned no file.');
+      }
+      return {
+        fileName: result.fileName.slice(0, 120),
+        durationSec:
+          typeof result.durationSec === 'number' && Number.isFinite(result.durationSec)
+            ? Math.max(0, result.durationSec)
+            : 0,
+        costUsd:
+          typeof result.costUsd === 'number' && Number.isFinite(result.costUsd)
+            ? Math.max(0, result.costUsd)
+            : 0,
+        model: typeof result.model === 'string' ? result.model.slice(0, 120) : 'unknown',
+        bytes:
+          typeof result.bytes === 'number' && Number.isInteger(result.bytes) && result.bytes >= 0
+            ? result.bytes
+            : 0,
+      };
+    },
+
+    'settings:get': async (): Promise<SettingsSnapshot> => {
+      const snapshot = await settings.get();
+      if (spend === undefined) return snapshot;
+      try {
+        const summary = await spend.summary();
+        return { ...snapshot, spendUsd: summary.monthUsd };
+      } catch {
+        return snapshot;
+      }
+    },
 
     'settings:setTheme': async (theme): Promise<void> => {
       await settings.setTheme(requireTheme(theme));
+    },
+
+    'settings:setTagging': async (enabled): Promise<void> => {
+      const value = requireBoolean(enabled, 'enabled');
+      if (settings.setTagging === undefined) {
+        throw new IpcError('E_PIPELINE', 'Tagging settings are not available in this build.');
+      }
+      await settings.setTagging(value);
     },
 
     'settings:setKey': async (key): Promise<void> => {

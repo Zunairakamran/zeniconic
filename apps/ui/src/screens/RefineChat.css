@@ -133,6 +133,36 @@
   aspect-ratio: 1;
 }
 
+.refine__video {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  background: #000;
+}
+
+.refine__draftrow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 8px 0 0;
+  flex-wrap: wrap;
+}
+
+.refine__draftnote {
+  font: 400 12px/1.4 var(--font-ui, system-ui);
+  color: var(--ink-60, #6b655c);
+}
+
+/* The draft already burns the price and address; keep only the selector. */
+.refine__frame.is-live .refine__topline,
+.refine__frame.is-live .refine__ratiobadge,
+.refine__frame.is-live .refine__priceblock {
+  display: none;
+}
+
 .refine__frame::after {
   content: '';
   position: absolute;
@@ -380,22 +410,6 @@
   opacity: 0.88;
 }
 
-.refine__caption {
-  position: absolute;
-  left: 22px;
-  right: 38px;
-  bottom: 9%;
-  z-index: 6;
-  padding: 5px 7px;
-  border-radius: 3px;
-  background: color-mix(in srgb, var(--stage) 62%, transparent);
-  color: var(--rf-fg);
-  font-size: 9.5px;
-  line-height: 1.3;
-  text-align: center;
-  text-wrap: balance;
-}
-
 .refine__frame.is-square .refine__topline {
   top: 11%;
 }
@@ -404,138 +418,8 @@
   bottom: 27%;
 }
 
-.refine__frame.is-square .refine__caption {
-  bottom: 12%;
-}
-
 .refine__frame.is-square .refine__safeframe {
   inset: 8% 11% 13% 6%;
-}
-
-/* Transport */
-.refine__transport {
-  flex: none;
-  padding-top: 2px;
-}
-
-.refine__times {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  color: color-mix(in srgb, var(--rf-fg) 70%, transparent);
-  font-family: var(--font-mono);
-  font-size: var(--text-2xs);
-}
-
-.refine__scrub {
-  position: relative;
-  flex: 1;
-  height: 20px;
-  display: flex;
-  align-items: center;
-}
-
-.refine__scrub:focus-within {
-  outline: 2px solid var(--brass);
-  outline-offset: 2px;
-  border-radius: 3px;
-}
-
-.refine__track {
-  position: absolute;
-  left: 0;
-  right: 0;
-  height: 3px;
-  border-radius: 2px;
-  background: var(--stage-80);
-  overflow: hidden;
-}
-
-.refine__track i {
-  display: block;
-  height: 100%;
-  background: var(--brass);
-}
-
-.refine__head {
-  position: absolute;
-  top: 50%;
-  width: 9px;
-  height: 9px;
-  margin: -4.5px 0 0 -4.5px;
-  border-radius: 50%;
-  background: var(--rf-fg-strong);
-  box-shadow: 0 0 0 2px color-mix(in srgb, var(--stage) 55%, transparent);
-  pointer-events: none;
-}
-
-.refine__tick {
-  position: absolute;
-  top: 50%;
-  width: 1px;
-  height: 6px;
-  margin-top: -3px;
-  background: color-mix(in srgb, var(--rf-fg) 26%, transparent);
-}
-
-.refine__range {
-  position: absolute;
-  inset: 0;
-  width: 100%;
-  height: 100%;
-  margin: 0;
-  opacity: 0;
-  cursor: pointer;
-  appearance: none;
-  background: transparent;
-}
-
-.refine__controls {
-  display: flex;
-  align-items: center;
-  gap: 10px;
-  margin-top: 2px;
-}
-
-.refine__play {
-  width: 34px;
-  height: 34px;
-  display: grid;
-  place-items: center;
-  border: 0;
-  border-radius: 50%;
-  background: var(--rf-fg-strong);
-  color: var(--stage);
-  cursor: pointer;
-}
-
-.refine__play:hover {
-  background: var(--rf-fg);
-}
-
-.refine__pause {
-  display: flex;
-  gap: 3px;
-}
-
-.refine__pause i {
-  display: block;
-  width: 3px;
-  height: 11px;
-  background: currentColor;
-}
-
-.refine__loud {
-  margin-left: auto;
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  font-size: var(--text-2xs);
-  color: color-mix(in srgb, var(--rf-fg) 68%, transparent);
-}
-
-.refine__loud svg {
-  color: var(--sage);
 }
 
 /* Version rail */
@@ -566,10 +450,10 @@
 }
 
 .refine__vthumb {
-  display: flex;
-  align-items: center;
-  gap: 6px;
-  padding: 3px 7px 3px 3px;
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 4px 9px;
   border: 1px solid transparent;
   border-radius: var(--r-sm);
   background: transparent;
@@ -589,13 +473,18 @@
   color: var(--rf-fg);
 }
 
-.refine__mini {
-  position: relative;
-  display: block;
-  width: 44px;
-  height: 26px;
-  border-radius: 3px;
-  overflow: hidden;
+.refine__vnum {
+  font-weight: 700;
+}
+
+.refine__vwhen {
+  color: color-mix(in srgb, var(--rf-fg) 52%, transparent);
+  font-size: 8px;
+}
+
+.refine__vempty {
+  font-size: var(--text-2xs);
+  color: color-mix(in srgb, var(--rf-fg) 56%, transparent);
 }
 
 /* ── Chat ─────────────────────────────────────────────────────────── */
@@ -606,6 +495,110 @@
   min-height: 0;
   background: var(--paper);
   border-left: var(--border);
+}
+
+/* Version history — real saved versions only, never a placeholder. */
+.refine__history {
+  flex: none;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  max-height: 44%;
+  overflow-y: auto;
+  padding: var(--s-3) var(--s-4);
+  border-bottom: var(--border);
+  background: var(--paper-raised);
+}
+
+.refine__historyhead {
+  display: flex;
+  align-items: center;
+  gap: var(--s-2);
+}
+
+.refine__historytitle {
+  font-size: var(--text-2xs);
+  font-weight: 600;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  color: var(--ink-45);
+}
+
+.refine__empty {
+  margin: 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--ink-45);
+}
+
+.refine__hcard {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.refine__hhead {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 6px;
+  font-size: var(--text-xs);
+}
+
+.refine__hhead b {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  color: var(--ink);
+}
+
+.refine__hwhen {
+  color: var(--ink-45);
+  font-size: var(--text-2xs);
+}
+
+.refine__hstate {
+  margin-left: auto;
+  padding: 1px 7px;
+  border-radius: var(--r-pill);
+  background: var(--paper-deep);
+  color: var(--ink-45);
+  font-size: var(--text-2xs);
+  font-weight: 600;
+}
+
+.refine__hstate.is-current {
+  background: var(--brass-wash);
+  color: var(--brass-text);
+}
+
+.refine__hsummary {
+  margin: 0;
+  color: var(--ink-70);
+  font-size: 12px;
+  line-height: 1.45;
+}
+
+.refine__hwarn {
+  display: flex;
+  align-items: flex-start;
+  gap: 5px;
+  margin: 0;
+  color: var(--warn-text);
+  font-size: var(--text-2xs);
+  line-height: 1.45;
+}
+
+.refine__hwarn svg {
+  flex: none;
+  margin-top: 1px;
+}
+
+.refine__happly {
+  display: flex;
+}
+
+.refine__happly .btn {
+  justify-content: center;
 }
 
 .refine__chathead {
@@ -726,19 +719,6 @@
   font-size: 12px;
 }
 
-.refine__applied {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-top: 6px;
-  font-size: var(--text-2xs);
-  color: var(--ink-45);
-}
-
-.refine__applied svg {
-  color: var(--success-text);
-}
-
 /* Diff block — signs and words carry the meaning, colour is only a second cue. */
 .refine__diff {
   margin-top: 9px;
@@ -781,14 +761,6 @@
   line-height: 1.4;
 }
 
-.refine__row--add {
-  background: color-mix(in srgb, var(--sage-wash) 60%, var(--paper-raised));
-}
-
-.refine__row--del {
-  background: var(--paper-deep);
-}
-
 .refine__row--mod {
   background: var(--paper-raised);
 }
@@ -797,14 +769,6 @@
   color: var(--ink-70);
   font-family: var(--font-mono);
   font-weight: 700;
-}
-
-.refine__row--add .refine__sign {
-  color: var(--success-text);
-}
-
-.refine__row--del .refine__sign {
-  color: var(--danger-text);
 }
 
 .refine__row--mod .refine__sign {
@@ -846,19 +810,6 @@
 .refine__diffactions .btn {
   flex: 1;
   justify-content: center;
-}
-
-.refine__gate {
-  display: flex;
-  align-items: center;
-  gap: 5px;
-  margin-top: 7px;
-  font-size: 10.5px;
-  color: var(--warn-text);
-}
-
-.refine__gate svg {
-  color: var(--warn-text);
 }
 
 .refine__error {

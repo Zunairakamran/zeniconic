@@ -53,6 +53,23 @@ export type { VisionScores } from './vision';
 export { jpegStats, meanLumaFromJpeg } from './jpeg';
 export type { JpegStats } from './jpeg';
 
+export {
+  INSPECT_SCHEMA,
+  InspectError,
+  inspectRender,
+  inspectTimes,
+  validateInspectReply,
+} from './inspect';
+export type {
+  InspectDeps,
+  InspectErrorCode,
+  InspectInput,
+  InspectIssue,
+  InspectResult,
+  InspectSeverity,
+  InspectVerdict,
+} from './inspect';
+
 export type {
   CheckId,
   CheckResult,

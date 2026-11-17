@@ -1,9 +1,11 @@
 import { excerpt } from './retry';
 import { AiError } from './types';
-import type { Usage } from './types';
+import type { ToolCall, Usage } from './types';
 
 export interface Envelope {
   text: string;
+  toolCalls: ToolCall[];
+  finishReason: string | undefined;
   usage: Usage;
   cachedTokens: number;
   cacheDiscountUsd: number;
@@ -24,8 +26,32 @@ function money(value: unknown): number {
   return typeof value === 'number' && Number.isFinite(value) && value > 0 ? value : 0;
 }
 
+/**
+ * Reads `tool_calls` defensively: only complete entries with string id, name and
+ * arguments survive. A provider quirk is dropped rather than allowed to crash a
+ * reply that otherwise carries usable text.
+ */
+function toolCallsOf(message: Record<string, unknown>): ToolCall[] {
+  const raw = message['tool_calls'];
+  if (!Array.isArray(raw)) return [];
+
+  const calls: ToolCall[] = [];
+  for (const entry of raw) {
+    const record = asRecord(entry);
+    const fn = asRecord(record?.['function']);
+    const id = record?.['id'];
+    const name = fn?.['name'];
+    const args = fn?.['arguments'];
+    if (typeof id !== 'string' || id.length === 0) continue;
+    if (typeof name !== 'string' || name.length === 0) continue;
+    if (typeof args !== 'string') continue;
+    calls.push({ id, name, arguments: args });
+  }
+  return calls;
+}
+
 /** Some models return `content` as parts; concatenate the text parts only. */
-function contentToText(content: unknown): string {
+function contentToText(content: unknown, allowEmpty: boolean): string {
   if (typeof content === 'string') return content;
   if (Array.isArray(content)) {
     return content
@@ -36,6 +62,8 @@ function contentToText(content: unknown): string {
       })
       .join('');
   }
+  // A tool-calling reply legitimately has `content: null`.
+  if (allowEmpty && (content === null || content === undefined)) return '';
   throw new AiError('E_SERVER', 'OpenRouter response message had no usable content.');
 }
 
@@ -56,12 +84,17 @@ export function parseEnvelope(rawBody: string): Envelope {
     throw new AiError('E_SERVER', 'OpenRouter response had no message.');
   }
 
+  const toolCalls = toolCallsOf(message);
   const usageRaw = asRecord(root['usage']);
   const details = asRecord(usageRaw?.['prompt_tokens_details']);
   const reportedModel = root['model'];
+  const reportedFinish = firstChoice?.['finish_reason'];
 
   return {
-    text: contentToText(message['content']),
+    text: contentToText(message['content'], toolCalls.length > 0),
+    toolCalls,
+    finishReason:
+      typeof reportedFinish === 'string' && reportedFinish.length > 0 ? reportedFinish : undefined,
     usage: {
       promptTokens: tokenCount(usageRaw?.['prompt_tokens']),
       completionTokens: tokenCount(usageRaw?.['completion_tokens']),

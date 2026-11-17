@@ -66,13 +66,17 @@ function argAfter(args: string[], flag: string): string | undefined {
 
 describe('marketing transitions', () => {
   it('publishes the five-name palette the sheet relies on', () => {
-    expect(XFADE_PALETTE).toEqual({
+    expect(XFADE_PALETTE).toMatchObject({
       zoom_blur: 'zoomin',
       luma_wipe: 'hblur',
       light_leak: 'radial',
       whip: 'smoothleft',
       light_leak_alternate: 'fadeblack',
     });
+    // v2 adds the rest of the xfade palette; each must name a real filter.
+    expect(XFADE_PALETTE.dip_black).toBe('fadeblack');
+    expect(XFADE_PALETTE.dip_white).toBe('fadewhite');
+    expect(XFADE_PALETTE.glitch).toBe('pixelize');
     expect(XFADE_ALTERNATE.light_leak).toBe('fadeblack');
   });
 

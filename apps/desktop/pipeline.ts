@@ -11,18 +11,7 @@
  */
 
 import { spawn } from 'node:child_process';
-import {
-  access,
-  copyFile,
-  link,
-  mkdir,
-  mkdtemp,
-  readFile,
-  readdir,
-  rm,
-  stat,
-  writeFile,
-} from 'node:fs/promises';
+import { access, copyFile, link, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
 import { buildLoudnormPass1, parseLoudnormJson } from '../../packages/audio/src/index';
 import { validateEdl } from '../../packages/edl/src/index';
@@ -31,7 +20,6 @@ import type {
   CaptionWord,
   Clip,
   Edl,
-  LookId,
 } from '../../packages/edl/src/index';
 import { ffmpegPath, probe } from '../../packages/media/src/index';
 import type { JobRecord, Stage, StageExecutor } from '../../packages/jobs/src/index';
@@ -47,14 +35,40 @@ import type {
   VariantPreview,
   VariantSummary,
   VoiceMode,
+  ShotRow,
+  TaggingEstimateDto,
+  TaggingRunDto,
 } from '../../packages/ipc/src/index';
 import type { Candidate, Facts as PlannerFacts } from '../../packages/planner/src/index';
-import { MARKETING_FORMAT_ID } from '../../packages/planner/src/index';
+import {
+  MARKETING_FORMAT_ID,
+  MARKETING_VARIANT_ID,
+  PLANNED_VARIANTS,
+} from '../../packages/planner/src/index';
+import type { PlannedVariantSpec } from '../../packages/planner/src/index';
 import { PROFILES } from '../../packages/render/src/index';
 import type { ProfileId, Quality } from '../../packages/render/src/index';
 import type { Facts, ListingRecord, Store } from '../../packages/store/src/index';
-import { analyseFolder, buildRequest, defaultCanvas, planEdl, renderEdl } from '../../services/pipeline/service';
+import { analyseFolder, buildCandidates, buildRequest, defaultCanvas, planEdl, renderEdl } from '../../services/pipeline/service';
+import { readFootageIndex, indexShotRows, writeFootageIndex } from '../../services/pipeline/index-store';
+import type { FootageIndex, IndexSourceSignature } from '../../services/pipeline/index-store';
+import {
+  folderSignature,
+  indexMatchesSignature,
+  sameSourceFolder,
+} from '../../services/pipeline/index-store';
+import { readReferenceProfile } from '../../services/reference/src/index';
+import {
+  estimateTaggingCost,
+  tagIndexWithReport,
+  TAGGING_PROMPT_VERSION,
+} from '../../services/tagging/src/index';
+import type { ChatClient } from '../../packages/ai/src/index';
 import { renderMarketingFilm } from '../../services/pipeline/marketing';
+import {
+  pruneSegments,
+  renderPictureWithSegments,
+} from '../../services/pipeline/segment-cache';
 import {
   renderFfmpegOverlays,
   resolveFontsDirectory,
@@ -74,6 +88,7 @@ import {
   presenterWindowsFor,
   scriptCues,
   selectVoiceEngine,
+  STUDIO_USD_PER_CHAR,
   studioVoiceReady,
   voiceLinePath,
 } from '../../services/voice/src/index';
@@ -84,7 +99,6 @@ import {
   saveVariants,
   scoreForEdl,
   setVariantApproval,
-  VARIANT_LOOKS,
 } from './variants';
 import type { VariantPlan } from './variants';
 
@@ -96,6 +110,31 @@ export interface DesktopPipelineOptions {
   repoRoot?: string;
   /** Sends `job:progress` to the window; absent in tests. */
   onProgress?: (event: JobProgressEvent) => void;
+  /** Studio TTS model id from `models.json`; Kokoro remains the offline backup. */
+  ttsModel?: string;
+  /** Windows reduced-motion preference, threaded into the Remotion overlay pass. */
+  reduceMotion?: boolean;
+  /** Records studio voice spend after an export. */
+  voiceOnCost?: (usd: number, listingId: string) => Promise<void> | void;
+  /** The Settings-selected bed under `<data>/assets/music`; absent = bundled. */
+  musicTrack?: () => string | undefined | Promise<string | undefined>;
+  /** Optional vision tagging; absent leaves the filename heuristic in charge. */
+  tagging?: TaggingOptions;
+}
+
+export interface TaggingOptions {
+  /** Resolved tagging model id (routing suffix allowed). */
+  model: string;
+  /** Refuse a batch whose pre-flight estimate exceeds this. */
+  maxUsd: number;
+  /** A client for this run, or undefined when no key is configured. */
+  client: () => Promise<ChatClient | undefined>;
+  /** Whether this analysis run should tag automatically. */
+  enabled?: () => boolean | Promise<boolean>;
+  /** False when the daily/monthly/listing budget would be exceeded. */
+  canSpend?: (usd: number, listingId: string) => Promise<boolean> | boolean;
+  /** Record the actual spend after a successful batch. */
+  onCost?: (usd: number, listingId: string) => Promise<void> | void;
 }
 
 interface Analysed {
@@ -154,7 +193,6 @@ export class AudioMasterError extends Error {
   }
 }
 
-const TARGET_SECONDS = 30;
 const EXPORT_PROFILE: ProfileId = 'vertical-social';
 const MAX_PROCESS_LINES = 120;
 /** A Remotion render that has not finished by now is not going to. */
@@ -245,6 +283,16 @@ function labelFor(look: VariantLook): string {
   return look.charAt(0).toUpperCase() + look.slice(1);
 }
 
+/**
+ * The label for a persisted variant. The marketing cut is not one of the three
+ * looks, so its id resolves through the planner catalogue; every other variant
+ * keeps the look label it has always had.
+ */
+function variantLabel(variant: Pick<VariantSummary, 'id' | 'look'>): string {
+  const spec = PLANNED_VARIANTS.find((entry) => entry.id === variant.id);
+  return spec?.label ?? labelFor(variant.look);
+}
+
 const CUT_TRANSITION = { type: 'cut', durationSec: 0 } as const;
 
 /**
@@ -264,6 +312,17 @@ function cutOnlyEdl(edl: Edl): Edl {
         : { transitionOut: { ...CUT_TRANSITION } }),
     })),
   };
+}
+
+/**
+ * Attaches the folder snapshot to an index before it is persisted. Without a
+ * signature the file is still readable; it simply can never be reused.
+ */
+function withSourceSignature(
+  index: FootageIndex,
+  signature: IndexSourceSignature | undefined,
+): FootageIndex {
+  return signature === undefined ? index : { ...index, sourceSignature: signature };
 }
 
 function profileOrientation(profile: ProfileId): 'landscape' | 'portrait' {
@@ -463,6 +522,11 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
   private readonly dataDir: string;
   private readonly repoRoot: string;
   private readonly onProgress: ((event: JobProgressEvent) => void) | undefined;
+  private readonly ttsModel: string | undefined;
+  private readonly tagging: TaggingOptions | undefined;
+  private readonly reduceMotion: boolean;
+  private readonly voiceOnCost: ((usd: number, listingId: string) => Promise<void> | void) | undefined;
+  private readonly musicTrack: (() => string | undefined | Promise<string | undefined>) | undefined;
 
   private readonly sources = new Map<string, SourceBinding>();
   private readonly analysed = new Map<string, Analysed>();
@@ -474,6 +538,11 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     this.dataDir = options.dataDir;
     this.repoRoot = resolve(options.repoRoot ?? process.cwd());
     this.onProgress = options.onProgress;
+    this.ttsModel = options.ttsModel;
+    this.tagging = options.tagging;
+    this.reduceMotion = options.reduceMotion === true;
+    this.voiceOnCost = options.voiceOnCost;
+    this.musicTrack = options.musicTrack;
   }
 
   /** Called by `analysis:start` before the runner picks the job up. */
@@ -502,7 +571,7 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
           job.id,
           'plan',
           100,
-          `${variants.length} variants · ${variants.map((variant) => variant.look).join(', ')}`,
+          `${variants.length} variants · ${variants.map((variant) => variantLabel(variant)).join(', ')}`,
         );
         return {
           stage: 'plan',
@@ -520,13 +589,13 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
           try {
             await this.renderPreview(listing, variant.id);
           } catch (error) {
-            console.warn(`[pipeline] preview failed for ${variant.look}: ${messageOf(error)}`);
+            console.warn(`[pipeline] preview failed for ${variant.id}: ${messageOf(error)}`);
           }
           this.emit(
             job.id,
             'render',
             Math.round(((index + 1) / Math.max(1, variants.length)) * 100),
-            `${labelFor(variant.look)} preview`,
+            `${variantLabel(variant)} preview`,
           );
         }
         return { stage: 'render', detail: `${variants.length} previews ready` };
@@ -546,6 +615,108 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
 
   async listVariants(listingId: string): Promise<VariantSummary[]> {
     return readVariants(this.store.dirFor(listingId));
+  }
+
+  async listShots(listingId: string): Promise<ShotRow[]> {
+    const listingDir = this.store.dirFor(listingId);
+    const index =
+      (await readFootageIndex(listingDir, { tagged: true }).catch(() => undefined)) ??
+      (await readFootageIndex(listingDir).catch(() => undefined));
+    if (index === undefined) return [];
+
+    const tagsById = new Map(
+      index.clips.flatMap((clip) => clip.shots.map((shot) => [shot.id, shot.tags] as const)),
+    );
+
+    return indexShotRows(index).map((row) => {
+      const tags = tagsById.get(row.shotId);
+      return {
+        shotId: row.shotId,
+        sourceId: row.sourceId,
+        room: row.room,
+        startSec: row.startSec,
+        endSec: row.endSec,
+        durationSec: Math.round((row.endSec - row.startSec) * 1000) / 1000,
+        ...(row.score === undefined ? {} : { score: row.score }),
+        ...(row.src === undefined ? {} : { src: row.src }),
+        ...(tags?.sellingPoints === undefined ? {} : { sellingPoints: [...tags.sellingPoints] }),
+        ...(tags?.defects === undefined ? {} : { defects: [...tags.defects] }),
+      };
+    });
+  }
+
+  async estimateTagging(listingId: string): Promise<TaggingEstimateDto> {
+    const listingDir = this.store.dirFor(listingId);
+    const index =
+      (await readFootageIndex(listingDir, { tagged: true }).catch(() => undefined)) ??
+      (await readFootageIndex(listingDir).catch(() => undefined));
+    const shots = index?.clips.reduce((sum, clip) => sum + clip.shots.length, 0) ?? 0;
+    const tagged =
+      index?.clips.reduce(
+        (sum, clip) => sum + clip.shots.filter((shot) => shot.tags !== undefined).length,
+        0,
+      ) ?? 0;
+    const model = this.tagging?.model ?? 'not configured';
+    const capUsd = this.tagging?.maxUsd ?? 0.25;
+    let usd = 0;
+    if (shots > 0 && this.tagging !== undefined) {
+      try {
+        usd = estimateTaggingCost(shots, this.tagging.model).usd;
+      } catch {
+        usd = 0;
+      }
+    }
+    return { shots, usd, model, capUsd, tagged };
+  }
+
+  /** Manual tagging for the review screen; same guards as the analysis path. */
+  async runTagging(listingId: string): Promise<TaggingRunDto> {
+    const tagging = this.tagging;
+    if (tagging === undefined) throw new Error('Vision tagging is not available in this build.');
+    const listingDir = this.store.dirFor(listingId);
+    const index =
+      (await readFootageIndex(listingDir).catch(() => undefined)) ??
+      (await readFootageIndex(listingDir, { tagged: true }).catch(() => undefined));
+    if (index === undefined) throw new Error('Analyse the listing before tagging its shots.');
+
+    const estimate = await this.estimateTagging(listingId);
+    if (estimate.usd > tagging.maxUsd) {
+      throw new Error(
+        `This batch is estimated at $${estimate.usd.toFixed(3)}, above the $${tagging.maxUsd.toFixed(2)} cap.`,
+      );
+    }
+    if (tagging.canSpend !== undefined) {
+      const allowed = await Promise.resolve(tagging.canSpend(estimate.usd, listingId)).catch(() => false);
+      if (!allowed) throw new Error('The model budget for today, this month or this listing is exhausted.');
+    }
+    const client = await tagging.client().catch(() => undefined);
+    if (client === undefined) {
+      throw new Error('Add an OpenRouter key in Settings before tagging shots.');
+    }
+
+    const run = await this.tagIndex(listingId, index, () => undefined);
+    if (run === undefined) throw new Error('Tagging did not produce a tagged index.');
+    await writeFootageIndex(listingDir, run.index, { tagged: true });
+    const actual = run.report.costUsd > 0 ? run.report.costUsd : run.estimatedUsd;
+    await Promise.resolve(tagging.onCost?.(actual, listingId)).catch(() => undefined);
+
+    const analysed = this.analysed.get(listingId);
+    if (analysed !== undefined) {
+      this.analysed.set(listingId, {
+        ...analysed,
+        candidates: buildCandidates(run.index),
+        clipCount: run.index.clips.length,
+      });
+    }
+
+    return {
+      shots: run.report.total,
+      tagged: run.report.tagged,
+      failed: run.report.failed,
+      costUsd: actual,
+      estimatedUsd: run.estimatedUsd,
+      model: tagging.model,
+    };
   }
 
   async approveVariant(input: {
@@ -935,6 +1106,12 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     voice: VoiceMode;
     /** Auto cover frames are written unless this is explicitly false. */
     cover?: boolean;
+    /**
+     * Ignore cached picture segments for this export (they are refreshed, not
+     * deleted). Also selectable with `ZENICONIC_SEGMENT_CACHE=fresh`; `off`
+     * disables the cache entirely.
+     */
+    fresh?: boolean;
   }): Promise<ExportResult> {
     const startedAt = Date.now();
     const deadline = startedAt + EXPORT_BUDGET_MS;
@@ -943,6 +1120,14 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     const listingDir = this.store.dirFor(listing.id);
     const quality: Quality = input.quality;
     const jobId = `export_${listing.id}`;
+
+    // Picture segments: unchanged clips reuse their encoded MP4 on a re-render.
+    const segmentCacheDir = join(this.dataDir, 'cache', 'segments');
+    const segmentCacheMode = process.env.ZENICONIC_SEGMENT_CACHE;
+    const segmentCacheEnabled = segmentCacheMode !== 'off';
+    const freshSegments = input.fresh === true || segmentCacheMode === 'fresh';
+    let segmentHits = 0;
+    let segmentMisses = 0;
 
     const profiles = [...new Set(input.profiles.map(asProfile))];
     if (profiles.length === 0) throw new Error('Choose at least one output shape.');
@@ -964,6 +1149,20 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     let done = 0;
     let captionWordCount = 0;
 
+    if (segmentCacheEnabled) {
+      // Opportunistic, best-effort: stale segments are removed once per export
+      // so a growing cache cannot fill the disk, but a locked file never fails
+      // an export that is otherwise ready to render.
+      const configuredAge = Number(process.env.ZENICONIC_SEGMENT_MAX_AGE_DAYS);
+      await pruneSegments(segmentCacheDir, {
+        ...(Number.isFinite(configuredAge) && configuredAge > 0
+          ? { maxAgeDays: configuredAge }
+          : {}),
+      }).catch((error: unknown) => {
+        console.warn(`[pipeline] segment prune skipped: ${messageOf(error)}`);
+      });
+    }
+
     try {
       // The voice stage runs once per listing, not once per profile. Every
       // profile reuses the same mastered audio and caption words.
@@ -980,6 +1179,12 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
         workDir,
       });
       warnings.push(...voice.warnings);
+      if (voice.provider === 'studio' && voice.characters > 0) {
+        const usd = voice.characters * STUDIO_USD_PER_CHAR;
+        await Promise.resolve(this.voiceOnCost?.(usd, listing.id)).catch((error: unknown) => {
+          console.warn(`[pipeline] could not record voice spend: ${messageOf(error)}`);
+        });
+      }
 
       for (const variant of variants) {
         const unresolved = await readVariantEdl(listingDir, variant.id);
@@ -992,7 +1197,7 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
             jobId,
             'render',
             Math.floor((done / total) * 100),
-            `${labelFor(variant.look)} · ${profile} · ${done + 1} of ${total}`,
+            `${variantLabel(variant)} · ${profile} · ${done + 1} of ${total}`,
           );
 
           // Profile-specific framing: a portrait source into a landscape
@@ -1018,8 +1223,11 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
           // QA: cut-only picture pass so FFmpeg never shortens the timeline by
           // overlapping dissolves. Remotion applies the visible crossfades.
           const pictureEdl = cutOnlyEdl(captionedEdl);
-          const picture = join(workDir, `${variant.look}_${profile}_picture.mp4`);
-          const output = await this.outputPath(listing, variant.look, profile);
+          // Keyed by variant id, not look: the marketing cut shares the
+          // `social` look, so a look-keyed work file would collide with the
+          // social variant in the same export work directory.
+          const picture = join(workDir, `${variant.id}_${profile}_picture.mp4`);
+          const output = await this.outputPath(listing, variant.id, profile);
 
           let overlayOutput: string;
           const marketing =
@@ -1030,7 +1238,7 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
             // The 38 s campaign renders picture, xfade transitions, ASS captions
             // and the price/entrance/spec cards in one FFmpeg pass. A Remotion
             // pass of this length cannot fit the export budget.
-            const film = join(workDir, `${variant.look}_${profile}_marketing.mp4`);
+            const film = join(workDir, `${variant.id}_${profile}_marketing.mp4`);
             try {
               const rendered = await renderMarketingFilm({
                 edl: captionedEdl,
@@ -1052,15 +1260,34 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
               );
             }
           } else {
+            const pictureTimeout = Math.max(60_000, deadline - Date.now());
             try {
-              await renderEdl(pictureEdl, profile, quality, picture, {
+              if (segmentCacheEnabled) {
+                // The picture is a set of normalised clip segments, so only the
+                // clips that changed since the last export are encoded again.
+                const report = await renderPictureWithSegments({
+                  edl: pictureEdl,
+                  profile,
+                  quality,
+                  output: picture,
+                  cacheDir: segmentCacheDir,
+                  workDir,
+                  timeoutMs: pictureTimeout,
+                  ...(freshSegments ? { fresh: true } : {}),
+                });
+                segmentHits += report.hits;
+                segmentMisses += report.misses;
+                warnings.push(...report.warnings);
+              } else {
                 // The picture pass is the one long FFmpeg step; it gets what is
                 // left of the budget, not an open-ended slot.
-                timeoutMs: Math.max(60_000, deadline - Date.now()),
-              });
+                await renderEdl(pictureEdl, profile, quality, picture, {
+                  timeoutMs: pictureTimeout,
+                });
+              }
             } catch (error) {
               throw new Error(
-                `Could not render the ${labelFor(variant.look)} ${profile} video: ${messageOf(error)}`,
+                `Could not render the ${variantLabel(variant)} ${profile} video: ${messageOf(error)}`,
               );
             }
 
@@ -1104,13 +1331,13 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
           }
 
           if (!(await exists(output))) {
-            throw new Error(`The ${labelFor(variant.look)} ${profile} file was not written.`);
+            throw new Error(`The ${variantLabel(variant)} ${profile} file was not written.`);
           }
 
           await this.assertDuration(
             output,
             sourceEdl.format.targetDurationSec,
-            `${labelFor(variant.look)} ${profile}`,
+            `${variantLabel(variant)} ${profile}`,
           );
 
           // The review gate runs on the finished file, not the plan.
@@ -1125,14 +1352,14 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
             const failed = review.checks.filter((check) => !check.passed);
             await rm(output, { force: true }).catch(() => undefined);
             throw new Error(
-              `The ${labelFor(variant.look)} ${profile} export failed review and was deleted:\n- ${failed
+              `The ${variantLabel(variant)} ${profile} export failed review and was deleted:\n- ${failed
                 .map((check) => `${check.id}: ${check.detail}`)
                 .join('\n- ')}`,
             );
           }
           if (review.verdict === 'retry') {
             warnings.push(
-              `The ${labelFor(variant.look)} ${profile} export passed the file checks but review asked for another pass: ${
+              `The ${variantLabel(variant)} ${profile} export passed the file checks but review asked for another pass: ${
                 review.feedback ?? 'adjust the edit and re-export.'
               }`,
             );
@@ -1145,7 +1372,7 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
             const srt = await writeSrtFile(captionedEdl, srtPath);
             if (srt.cueCount === 0) {
               warnings.push(
-                `The ${labelFor(variant.look)} ${profile} export has no caption words, so no .srt was written.`,
+                `The ${variantLabel(variant)} ${profile} export has no caption words, so no .srt was written.`,
               );
             } else {
               files.push(srt.path);
@@ -1162,17 +1389,24 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
             jobId,
             'render',
             Math.floor((done / total) * 100),
-            `${labelFor(variant.look)} · ${profile} · ${done} of ${total}`,
+            `${variantLabel(variant)} · ${profile} · ${done} of ${total}`,
           );
         }
       }
 
       const seconds = ((Date.now() - startedAt) / 1000).toFixed(1);
+      const segments = segmentHits + segmentMisses;
+      if (segmentHits > 0) {
+        warnings.push(
+          `Picture segments: reused ${String(segmentHits)} of ${String(segments)} clips from the cache; ${String(segmentMisses)} re-encoded.`,
+        );
+      }
+      const segmentNote = segments > 0 ? ` · ${String(segmentHits)}/${String(segments)} segments cached` : '';
       this.emit(
         jobId,
         'render',
         100,
-        `${files.length} file${files.length === 1 ? '' : 's'} written · ${captionWordCount} caption words · ${seconds} s`,
+        `${files.length} file${files.length === 1 ? '' : 's'} written · ${captionWordCount} caption words · ${seconds} s${segmentNote}`,
       );
       const exportDir = join(listingDir, 'exports');
       return warnings.length > 0 ? { files, exportDir, warnings } : { files, exportDir };
@@ -1191,6 +1425,25 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
 
   /** The shipped catchy bed; `data/assets` wins over the legacy `data/music`. */
   private async findMusicTrack(): Promise<string | undefined> {
+    // A generated or selected bed wins, but only if it is a bare file name under
+    // the app music folder; the setting is never a path.
+    try {
+      const selected = await Promise.resolve(this.musicTrack?.());
+      if (
+        typeof selected === 'string' &&
+        /^[A-Za-z0-9][A-Za-z0-9._-]*\.(mp3|m4a|wav)$/i.test(selected)
+      ) {
+        for (const candidate of [
+          join(this.dataDir, 'assets', 'music', selected),
+          join(this.repoRoot, 'data', 'assets', 'music', selected),
+        ]) {
+          if (await exists(candidate)) return candidate;
+        }
+      }
+    } catch {
+      // Fall through to the bundled bed.
+    }
+
     const resourcesPath = (process as NodeJS.Process & { resourcesPath?: string }).resourcesPath;
     const packaged =
       typeof resourcesPath === 'string' && resourcesPath.length > 0
@@ -1291,7 +1544,13 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     edl: Edl;
     mode: VoiceMode;
     workDir: string;
-  }): Promise<{ audioPath?: string; captions: CaptionWord[]; warnings: string[] }> {
+  }): Promise<{
+    audioPath?: string;
+    captions: CaptionWord[];
+    warnings: string[];
+    provider: 'studio' | 'local';
+    characters: number;
+  }> {
     const music = await this.findMusicTrack();
     const totalSec = input.edl.format.targetDurationSec;
     const cacheDir = join(this.dataDir, 'voice');
@@ -1305,6 +1564,8 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
         ...withMusic(),
         captions: [],
         warnings: ['No presenter audio was found; exporting with music only.'],
+        provider: 'local',
+        characters: 0,
       };
     }
 
@@ -1375,6 +1636,8 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
         ...withMusic(),
         captions: [],
         warnings: [detail],
+        provider: 'local',
+        characters: 0,
       };
     }
 
@@ -1385,6 +1648,7 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
         ...(music === undefined ? {} : { music }),
         cacheDir,
         ...(modelCache === undefined ? {} : { modelDir: modelCache }),
+        ...(this.ttsModel === undefined ? {} : { voiceModel: this.ttsModel }),
         outDir,
         totalSec,
       });
@@ -1395,7 +1659,9 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
           input.mode === 'music'
             ? []
             : wordsFromCaptions(result.captions, totalSec),
-        warnings: [],
+        warnings: result.warnings,
+        provider: result.provider,
+        characters: result.characters,
       };
     } catch (error) {
       const reason = messageOf(error);
@@ -1410,6 +1676,8 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
               ? `The studio voice could not be used (${reason}); exporting with music only. Check the OpenRouter key in Settings, or install the offline voice model.`
               : `The voice track could not be built (${reason}); exporting with music only.`,
         ],
+        provider: 'local',
+        characters: 0,
       };
     }
   }
@@ -1566,6 +1834,7 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
       input.quality,
     ];
     if (input.captions === 'burned' || input.captions === 'both') args.push('--captions');
+    if (this.reduceMotion) args.push('--reduce-motion');
     if (input.brand?.agentName !== undefined) args.push('--agent', input.brand.agentName);
     if (input.brand?.agency !== undefined) args.push('--agency', input.brand.agency);
     if (input.brand?.orn !== undefined) args.push('--orn', input.brand.orn);
@@ -1777,12 +2046,46 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
   // Stages
   // -------------------------------------------------------------------------
 
+  /**
+   * Produces the candidate pool for a stage.
+   *
+   * Evidence, in order: the in-memory analysis of this exact folder, then a
+   * persisted index whose signature proves it describes this folder unchanged,
+   * then a real index run. A resumed job has no in-memory binding — `main.ts`
+   * rebinds the checkpoint folder — so the folder must be taken from the job
+   * record, and footage that is provably unchanged must not be probed again.
+   */
   private async analyse(job: JobRecord, signal: AbortSignal): Promise<Analysed> {
     const binding = this.sources.get(job.id);
-    const folder =
-      binding?.folder ??
-      this.analysed.get(job.listingId)?.folder ??
-      join(this.store.dirFor(job.listingId), 'media');
+    const listingDir = this.store.dirFor(job.listingId);
+    const inMemory = this.analysed.get(job.listingId);
+
+    const folder = resolve(
+      binding?.folder ?? job.checkpoint ?? inMemory?.folder ?? join(listingDir, 'media'),
+    );
+
+    if (inMemory !== undefined && sameSourceFolder(inMemory.folder, folder)) return inMemory;
+
+    const reused = await this.reusePersistedIndex(listingDir, folder);
+    if (reused !== undefined) {
+      this.analysed.set(job.listingId, reused);
+      // A crash can land between the index write and the listing update, so
+      // the record is refreshed here too. It touches listing.json, never the
+      // index, so the signature stays reusable.
+      await this.store
+        .update(job.listingId, { clipCount: reused.clipCount })
+        .catch((error: unknown) => {
+          console.warn(`[pipeline] could not refresh the clip count: ${messageOf(error)}`);
+        });
+      this.forward(job.id, {
+        stage: 'index',
+        percent: 100,
+        detail: `Footage unchanged since ${folder} was indexed; reusing ${String(
+          reused.clipCount,
+        )} clips`,
+      });
+      return reused;
+    }
 
     const analysed = await this.indexFolder(job.listingId, folder, (event) =>
       this.forward(job.id, event),
@@ -1791,15 +2094,58 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     return analysed;
   }
 
+  /**
+   * The persisted index stands in for a re-scan only when its signature proves
+   * it was built from this folder and the folder has not changed since.
+   *
+   * Tagging counts as part of the analysis: while vision tagging is enabled only
+   * the tagged twin can be reused, so a resume can never silently skip a pass
+   * the user asked for. No signature, no reuse — an index of unknown provenance
+   * is re-indexed rather than trusted.
+   */
+  private async reusePersistedIndex(
+    listingDir: string,
+    folder: string,
+  ): Promise<Analysed | undefined> {
+    const signature = await folderSignature(folder).catch(() => undefined);
+    if (signature === undefined) return undefined;
+
+    const taggingConfigured = this.tagging !== undefined;
+    const taggingEnabled =
+      taggingConfigured &&
+      (await Promise.resolve(this.tagging?.enabled?.())
+        .then((value) => value !== false)
+        .catch(() => true));
+
+    const tagged = await readFootageIndex(listingDir, { tagged: true }).catch(() => undefined);
+    const persisted = taggingEnabled
+      ? tagged
+      : (tagged ?? (await readFootageIndex(listingDir).catch(() => undefined)));
+
+    if (persisted === undefined || persisted.clips.length === 0) return undefined;
+    if (!indexMatchesSignature(persisted, signature)) return undefined;
+
+    return {
+      folder,
+      candidates: buildCandidates(persisted),
+      clipCount: persisted.clips.length,
+    };
+  }
+
   private async indexFolder(
     listingId: string,
     folder: string,
     emit: (event: { stage: string; percent: number; detail?: string }) => void,
   ): Promise<Analysed> {
     const cached = this.analysed.get(listingId);
-    if (cached !== undefined && cached.folder === folder) return cached;
+    if (cached !== undefined && sameSourceFolder(cached.folder, folder)) return cached;
 
     emit({ stage: 'index', percent: 0, detail: `Indexing ${folder}` });
+
+    // Snapshot *before* the scan: if a file changes while analysis runs, the
+    // stored signature describes the earlier state, so a later resume sees a
+    // mismatch and re-indexes instead of trusting a mixed index.
+    const signature = await folderSignature(folder).catch(() => undefined);
 
     let result;
     try {
@@ -1808,12 +2154,42 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
       throw new Error(`Could not analyse "${folder}": ${messageOf(error)}`, { cause: error });
     }
 
+    let index = withSourceSignature(result.index, signature);
+    let candidates = result.candidates;
+
+    if (this.tagging !== undefined && (await this.tagging.enabled?.()) !== false) {
+      const tagged = await this.tagIndex(listingId, index, emit);
+      if (tagged !== undefined) {
+        index = withSourceSignature(tagged.index, signature);
+        candidates = buildCandidates(tagged.index);
+        try {
+          await writeFootageIndex(this.store.dirFor(listingId), index, { tagged: true });
+        } catch (error) {
+          console.warn(`[pipeline] could not persist the tagged index: ${messageOf(error)}`);
+        }
+        const actual = tagged.report.costUsd > 0 ? tagged.report.costUsd : tagged.estimatedUsd;
+        try {
+          await this.tagging.onCost?.(actual, listingId);
+        } catch (error) {
+          console.warn(`[pipeline] could not record tagging spend: ${messageOf(error)}`);
+        }
+      }
+    }
+
     const analysed: Analysed = {
       folder,
-      candidates: result.candidates,
-      clipCount: result.index.clips.length,
+      candidates,
+      clipCount: index.clips.length,
     };
     this.analysed.set(listingId, analysed);
+
+    // Persist the index so the agent, chat and a resumed job can see shots
+    // after a restart. The signature is what makes that file reusable.
+    try {
+      await writeFootageIndex(this.store.dirFor(listingId), index);
+    } catch (error) {
+      console.warn(`[pipeline] could not persist the footage index: ${messageOf(error)}`);
+    }
 
     await this.store.update(listingId, { clipCount: analysed.clipCount });
     emit({
@@ -1826,9 +2202,113 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
   }
 
   /**
-   * Plans the three creative directions. Each look changes the pacing and each
-   * seed changes only deterministic tie-breaks, so they can share a candidate
-   * pool without producing the same cut.
+   * Optional vision pass. Refuses when the pre-flight estimate exceeds the
+   * batch cap or no key is configured, and always cleans its contact sheets.
+   * A failure leaves the untagged index in place; tagging is an enhancement.
+   */
+  private async tagIndex(
+    listingId: string,
+    index: Parameters<typeof buildCandidates>[0],
+    emit: (event: { stage: string; percent: number; detail?: string }) => void,
+  ): Promise<
+    | {
+        index: Parameters<typeof buildCandidates>[0];
+        report: { total: number; tagged: number; failed: number; costUsd: number };
+        estimatedUsd: number;
+      }
+    | undefined
+  > {
+    const tagging = this.tagging;
+    if (tagging === undefined) return undefined;
+
+    const shots = index.clips.reduce((sum, clip) => sum + clip.shots.length, 0);
+    if (shots === 0) return undefined;
+
+    let estimate;
+    try {
+      estimate = estimateTaggingCost(shots, tagging.model);
+    } catch (error) {
+      console.warn(`[pipeline] could not price tagging: ${messageOf(error)}`);
+      return undefined;
+    }
+    if (estimate.usd > tagging.maxUsd) {
+      emit({
+        stage: 'index',
+        percent: 100,
+        detail: `Vision tagging skipped: ${shots} shots are estimated at $${estimate.usd.toFixed(3)}, above the $${tagging.maxUsd.toFixed(2)} cap.`,
+      });
+      return undefined;
+    }
+
+    const allowed =
+      tagging.canSpend === undefined
+        ? true
+        : await Promise.resolve(tagging.canSpend(estimate.usd, listingId)).catch(() => false);
+    if (!allowed) {
+      emit({
+        stage: 'index',
+        percent: 100,
+        detail: 'Vision tagging skipped: the model budget for today, this month or this listing is exhausted.',
+      });
+      return undefined;
+    }
+
+    const client = await tagging.client().catch(() => undefined);
+    if (client === undefined) {
+      emit({ stage: 'index', percent: 100, detail: 'Vision tagging skipped: no OpenRouter key.' });
+      return undefined;
+    }
+
+    const workDir = join(this.dataDir, 'tmp', `tag-${listingId}-${String(Date.now())}`);
+    await mkdir(workDir, { recursive: true });
+    emit({
+      stage: 'index',
+      percent: 40,
+      detail: `Tagging ${shots} shots (est. $${estimate.usd.toFixed(3)})`,
+    });
+
+    try {
+      const run = await tagIndexWithReport(index, {
+        client,
+        model: tagging.model,
+        promptVersion: TAGGING_PROMPT_VERSION,
+        workDir,
+        concurrency: 3,
+        onProgress: (done, total) => {
+          emit({
+            stage: 'index',
+            percent: Math.min(99, 40 + Math.round((done / Math.max(1, total)) * 59)),
+            detail: `Tagged ${done} of ${total} shots`,
+          });
+        },
+      });
+      if (run.report.failed > 0) {
+        console.warn(
+          `[pipeline] tagging finished with ${run.report.failed} failed shot(s): ${run.report.failures
+            .slice(0, 3)
+            .map((failure) => `${failure.shotId}: ${failure.message}`)
+            .join('; ')}`,
+        );
+      }
+      return { index: run.index, report: run.report, estimatedUsd: estimate.usd };
+    } catch (error) {
+      console.warn(`[pipeline] vision tagging failed: ${messageOf(error)}`);
+      return undefined;
+    } finally {
+      await rm(workDir, { recursive: true, force: true }).catch(() => undefined);
+    }
+  }
+
+  /**
+   * Plans the variant catalogue: the three 30-second looks plus the 38-second
+   * marketing cut. Each look changes the pacing and each seed changes only
+   * deterministic tie-breaks, so they can share a candidate pool without
+   * producing the same cut.
+   *
+   * The marketing cut is a stricter brief (a hero hook, ~16 distinct shots, a
+   * door for the reveal). When the pool cannot carry it, that variant alone is
+   * skipped with a warning: the three looks are still planned, and no partial
+   * or invalid 38-second EDL is ever written.
    */
   private async planVariants(
     listing: ListingRecord,
@@ -1837,26 +2317,61 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     jobId: string,
   ): Promise<VariantSummary[]> {
     const plans: VariantPlan[] = [];
+    const reference = await readReferenceProfile(this.store.dirFor(listing.id)).catch(
+      () => undefined,
+    );
+    const style =
+      reference === undefined
+        ? undefined
+        : {
+            averageShotSec: reference.profile.averageShotSec,
+            ...(reference.profile.pacing === 'slow' ||
+            reference.profile.pacing === 'medium' ||
+            reference.profile.pacing === 'fast'
+              ? { pacing: reference.profile.pacing }
+              : {}),
+          };
 
-    for (const [index, look] of VARIANT_LOOKS.entries()) {
+    const total = PLANNED_VARIANTS.length;
+
+    for (const [index, spec] of PLANNED_VARIANTS.entries()) {
       if (signal.aborted) throw new Error('Job cancelled.');
 
-      const edl = this.plan(
-        listing,
-        analysed,
-        EXPORT_PROFILE,
-        look,
-        seedFor(`${listing.id}:${look}`),
-      );
+      let edl: Edl;
+      try {
+        edl = this.plan(
+          listing,
+          analysed,
+          EXPORT_PROFILE,
+          spec,
+          seedFor(`${listing.id}:${spec.id}`),
+          style,
+        );
+      } catch (error) {
+        // Only the marketing brief is optional: a pool that cannot carry the
+        // beat sheet must not cost the user the three looks, and it must never
+        // produce a short or unvalidated "38-second" cut.
+        if (spec.format !== MARKETING_FORMAT_ID) throw error;
+        const reason = messageOf(error);
+        console.warn(`[pipeline] ${spec.label} variant skipped: ${reason}`);
+        this.emit(
+          jobId,
+          'plan',
+          Math.round(((index + 1) / total) * 100),
+          `${spec.label} skipped: ${reason}`,
+        );
+        continue;
+      }
+
       plans.push({
         summary: {
-          id: look,
-          look,
+          id: spec.id,
+          look: spec.look,
           format: edl.format.id,
           targetDurationSec: edl.format.targetDurationSec,
           clipCount: edl.clips.length,
           score: scoreForEdl(edl),
-          // `saveVariants` fills the absolute path after writing.
+          // `saveVariants` fills the stored path after writing.
           edlPath: '',
           approved: false,
         },
@@ -1866,9 +2381,15 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
       this.emit(
         jobId,
         'plan',
-        Math.round(((index + 1) / VARIANT_LOOKS.length) * 100),
-        `${labelFor(look)} · ${edl.clips.length} shots`,
+        Math.round(((index + 1) / total) * 100),
+        `${spec.label} · ${edl.clips.length} shots`,
       );
+    }
+
+    if (plans.length === 0) {
+      // Impossible in practice — the three looks are mandatory above — but the
+      // message is better than an empty save.
+      throw new Error(`No variant could be planned for "${listing.address}".`);
     }
 
     return saveVariants(this.store.dirFor(listing.id), plans);
@@ -1878,8 +2399,9 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     listing: ListingRecord,
     analysed: Analysed,
     profile: ProfileId,
-    look: LookId,
+    spec: PlannedVariantSpec,
     seed: number,
+    style?: { averageShotSec?: number; pacing?: 'slow' | 'medium' | 'fast' },
   ): Edl {
     if (analysed.candidates.length === 0) {
       throw new Error(`No usable shots in "${listing.address}". Add footage and analyse again.`);
@@ -1892,10 +2414,14 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
       // The music bank is a later stage; an empty src means no audio track.
       music: { trackId: 'none', src: '', beatGrid: [], gainDb: -18, duckUnderVoiceDb: -12 },
       profile,
-      targetSec: TARGET_SECONDS,
-      look,
+      targetSec: spec.targetDurationSec,
+      format: spec.format,
+      // The marketing cut has its own beat sheet; it uses the social caption
+      // look for rendering while its persisted variant look stays 'marketing'.
+      look: spec.look === 'marketing' ? 'social' : spec.look,
       seed,
       now: new Date().toISOString(),
+      ...(style === undefined ? {} : { style }),
     });
 
     return planEdl(request);
@@ -1910,20 +2436,23 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
   /**
    * FR-51: deterministic stem, never overwrite an existing file. A re-export
    * lands beside the first one with the next version number.
+   *
+   * The stem key is the variant id, not its look: the marketing cut shares the
+   * `social` look, and two variants must never write to the same file name.
    */
   private async outputPath(
     listing: ListingRecord,
-    look: VariantLook,
+    variantKey: string,
     profile: ProfileId,
   ): Promise<string> {
     const directory = join(this.store.dirFor(listing.id), 'exports');
     await mkdir(directory, { recursive: true });
 
     let version = 1;
-    let candidate = join(directory, `${listing.id}_${look}_${profile}_v${version}.mp4`);
+    let candidate = join(directory, `${listing.id}_${variantKey}_${profile}_v${version}.mp4`);
     while (await exists(candidate)) {
       version += 1;
-      candidate = join(directory, `${listing.id}_${look}_${profile}_v${version}.mp4`);
+      candidate = join(directory, `${listing.id}_${variantKey}_${profile}_v${version}.mp4`);
     }
     return candidate;
   }

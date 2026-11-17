@@ -20,7 +20,7 @@ import type { BrandKit } from '../../../packages/overlays/src/index';
 import type { ProfileId } from '../../../packages/render/src/profiles';
 import { isProfileId } from './canvas';
 import { renderOverlayVideo } from './render';
-import type { OverlayQuality } from './render';
+import type { OverlayQuality, RenderOverlayOptions } from './render';
 
 export interface CliOptions {
   edl: string;
@@ -29,8 +29,29 @@ export interface CliOptions {
   output: string;
   quality: OverlayQuality;
   captions: boolean;
+  /** Draw burned captions with reduced motion (opacity and reveals only). */
+  reduceMotion: boolean;
   brand: BrandKit;
 }
+
+/** Printed by `--help`; the one place the flags are explained. */
+export const CLI_USAGE = `Overlay renderer.
+
+  --edl <file>           EDL JSON to render (required)
+  --out <file>           output .mp4 (required)
+  --profile <id>         vertical-social | feed-portrait | landscape | pin
+  --listing <dir>        listing workspace / public dir (default: the EDL's dir)
+  --quality <level>      draft | standard | high (default: standard)
+  --captions             burn captions (the EDL must also ask for them)
+  --reduce-motion        draw captions without spatial motion: opacity and the
+                         character/word reveals only. Also enabled by
+                         ZENICONIC_REDUCE_MOTION=1 (default: off)
+  --agent <name>         brand: agent name
+  --agency <name>        brand: agency name
+  --orn <id>             brand: ORN
+  --logo <path>          brand: logo
+  --brand <file>         brand JSON file, overridden by the flags above
+  --help, -h             print this text and exit`;
 
 type BrandFile = Partial<BrandKit>;
 
@@ -58,6 +79,11 @@ export function parseCliArgs(argv: string[]): CliOptions {
       out: { type: 'string' },
       quality: { type: 'string', default: 'standard' },
       captions: { type: 'boolean', default: false },
+      'reduce-motion': {
+        type: 'boolean',
+        // Convenience for a shell profile or a CI run: the flag still wins.
+        default: process.env.ZENICONIC_REDUCE_MOTION === '1',
+      },
       agent: { type: 'string', default: '' },
       agency: { type: 'string', default: '' },
       orn: { type: 'string' },
@@ -89,7 +115,25 @@ export function parseCliArgs(argv: string[]): CliOptions {
     output,
     quality: parseQuality(values.quality),
     captions: values.captions === true,
+    reduceMotion: values['reduce-motion'] === true,
     brand,
+  };
+}
+
+/**
+ * The exact object `main` hands to the renderer. Pure, so a test can follow
+ * `--reduce-motion` from argv all the way to the composition's props.
+ */
+export function renderRequest(options: CliOptions, edl: Edl): RenderOverlayOptions {
+  return {
+    edl,
+    profile: options.profile,
+    brand: options.brand,
+    listingDir: options.listing,
+    output: options.output,
+    quality: options.quality,
+    captions: options.captions,
+    reduceMotion: options.reduceMotion,
   };
 }
 
@@ -113,10 +157,16 @@ async function brandFromFile(path: string, fallback: BrandKit): Promise<BrandKit
 }
 
 async function main(): Promise<void> {
+  const argv = process.argv.slice(2);
+  if (argv.includes('--help') || argv.includes('-h')) {
+    console.log(CLI_USAGE);
+    return;
+  }
+
   const raw = await (async () => {
     // Read --brand before parsing so a flag can override a file value.
     const { values } = parseArgs({
-      args: process.argv.slice(2),
+      args: argv,
       options: { brand: { type: 'string' } },
       allowPositionals: true,
       strict: false,
@@ -124,21 +174,13 @@ async function main(): Promise<void> {
     return typeof values.brand === 'string' ? values.brand : null;
   })();
 
-  const options = parseCliArgs(process.argv.slice(2));
+  const options = parseCliArgs(argv);
   if (raw) {
     options.brand = await brandFromFile(resolve(raw), options.brand);
   }
 
   const edl = JSON.parse(await readFile(options.edl, 'utf8')) as unknown as Edl;
-  const result = await renderOverlayVideo({
-    edl,
-    profile: options.profile,
-    brand: options.brand,
-    listingDir: options.listing,
-    output: options.output,
-    quality: options.quality,
-    captions: options.captions,
-  });
+  const result = await renderOverlayVideo(renderRequest(options, edl));
 
   const info = await stat(result.output);
   const megabytes = (info.size / (1024 * 1024)).toFixed(1);

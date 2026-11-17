@@ -15,6 +15,9 @@ export default defineConfig({
       '@zeniconic/ai': pkg('ai'),
       '@zeniconic/store': pkg('store'),
       '@zeniconic/jobs': pkg('jobs'),
+      '@zeniconic/capabilities': pkg('capabilities'),
+      '@zeniconic/agent': pkg('agent'),
+      '@zeniconic/ledger': pkg('ledger'),
     },
   },
   test: {

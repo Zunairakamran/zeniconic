@@ -51,6 +51,30 @@ function audioResponse(bytes: Buffer, contentType = 'audio/mpeg'): Response {
 }
 
 describe('createStudioEngine', () => {
+  it('uses PCM and a Gemini voice name for Gemini TTS models', async () => {
+    const calls: Call[] = [];
+    const engine = createStudioEngine({
+      apiKey: KEY,
+      model: 'google/gemini-3.8-flash-tts',
+      fetchImpl: async (url, init) => {
+        calls.push({ url: String(url), init: init ?? {} });
+        // 4,800 bytes of 16-bit PCM = 2,400 samples at 24 kHz.
+        return audioResponse(Buffer.alloc(4_800), 'audio/pcm');
+      },
+    });
+
+    const audio = await engine.generate('Some mornings.', { voice: 'matilda' });
+
+    expect(audio.sampleRate).toBe(24_000);
+    expect(audio.samples.length).toBe(2_400);
+    expect(JSON.parse(String(calls[0]?.init.body))).toEqual({
+      model: 'google/gemini-3.8-flash-tts',
+      input: 'Some mornings.',
+      voice: 'Kore',
+      response_format: 'pcm',
+    });
+  });
+
   it('posts the documented body and returns decoded samples', async () => {
     const calls: Call[] = [];
     const engine = createStudioEngine({

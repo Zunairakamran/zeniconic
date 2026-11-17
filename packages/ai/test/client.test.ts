@@ -44,8 +44,8 @@ describe('OpenRouterClient — transport', () => {
 
     expect(response.text).toBe('Sunlit kitchen with oak floors.');
     expect(response.usage).toEqual({ promptTokens: 1000, completionTokens: 500 });
-    expect(estimateCostUsd(MODEL, response.usage)).toBe(0.0028875);
-    expect(response.costUsd).toBe(0.002888); // net cost is rounded to 6 dp
+    expect(estimateCostUsd(MODEL, response.usage)).toBe(0.002625);
+    expect(response.costUsd).toBe(0.002625); // net cost is rounded to 6 dp
     expect(response.cachedTokens).toBe(0);
     expect(response.cacheDiscountUsd).toBe(0);
     expect(response.model).toBe(MODEL);
@@ -81,7 +81,7 @@ describe('OpenRouterClient — transport', () => {
     expect(transport.calls).toHaveLength(2);
     expect(sleeps).toEqual([300]);
     expect(ledger.spentUsd()).toBe(response.costUsd);
-    expect(ledger.remainingUsd()).toBe(0.997112);
+    expect(ledger.remainingUsd()).toBe(0.997375);
   });
 
   it('gives up with E_SERVER after maxRetries retries', async () => {
@@ -316,7 +316,7 @@ describe('OpenRouterClient — structured replies', () => {
     expect(issues.join(' ')).toContain('/caption');
     expect(issues.join(' ')).toContain('/price');
     // The tokens were still spent, so the ledger keeps the committed cost.
-    expect(ledger.spentUsd()).toBe(0.002888);
+    expect(ledger.spentUsd()).toBe(0.002625);
   });
 });
 
@@ -423,12 +423,12 @@ describe('OpenRouterClient — prompt caching', () => {
     const response = await client.complete({ model: MODEL, messages: [user('Hi')] });
 
     const gross = estimateCostUsd(MODEL, { promptTokens: 100_000, completionTokens: 10_000 });
-    expect(gross).toBe(0.12375);
+    expect(gross).toBe(0.1125);
     expect(response.cachedTokens).toBe(8000);
     expect(response.cacheDiscountUsd).toBe(0.004);
-    expect(response.costUsd).toBe(0.11975);
+    expect(response.costUsd).toBe(0.1085);
     expect(gross - response.costUsd).toBeCloseTo(0.004, 10);
-    expect(ledger.spentUsd()).toBe(0.11975);
+    expect(ledger.spentUsd()).toBe(0.1085);
   });
 
   it('records cached tokens without inventing a discount', async () => {
@@ -450,7 +450,7 @@ describe('OpenRouterClient — prompt caching', () => {
     const response = await client.complete({ model: MODEL, messages: [user('Hi')] });
     expect(response.cachedTokens).toBe(8000);
     expect(response.cacheDiscountUsd).toBe(0);
-    expect(response.costUsd).toBe(0.002888);
+    expect(response.costUsd).toBe(0.002625);
   });
 
   it('clamps the net cost at zero when the discount exceeds the gross cost', async () => {

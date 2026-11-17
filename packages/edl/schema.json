@@ -1,13 +1,17 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://zeniconic.app/schema/edl-1.0.0.json",
+  "$id": "https://zeniconic.app/schema/edl-2.0.0.json",
   "title": "Zeniconic EDL",
-  "description": "The single source of truth for one variant. A render is a pure function of an EDL plus its referenced media. Times are seconds (3dp), never frames. Runtime validation additionally enforces: clip.outSec > clip.inSec; clips ordered and contiguous except for explicit gaps; sum of (outSec-inSec)/speed equals format.targetDurationSec within ±0.5s; every overlay interval inside the timeline; every clip.src resolves to an indexed source.",
+  "description": "The single source of truth for one variant. A render is a pure function of an EDL plus its referenced media. Times are seconds (3dp), never frames. `edlVersion` accepts 1.0.0 (legacy, upgraded by migrateEdl) and 2.0.0. The schema enforces shape, closed enums, string formats and array limits; numeric ranges and cross-field rules (effects, grade, speed ramps, caption limits, effect windows) are enforced at runtime by validate.ts. Runtime validation additionally enforces: clip.outSec > clip.inSec; clips ordered and contiguous except for explicit gaps; sum of (outSec-inSec)/speed equals format.targetDurationSec within ±0.5s; every overlay interval inside the timeline; every clip.src resolves to an indexed source.",
   "type": "object",
   "additionalProperties": false,
   "required": ["edlVersion", "id", "listingId", "createdAt", "format", "look", "canvas", "clips", "overlays", "audio", "captions", "provenance"],
   "properties": {
-    "edlVersion": { "const": "1.0.0" },
+    "edlVersion": {
+      "type": "string",
+      "enum": ["1.0.0", "2.0.0"],
+      "description": "1.0.0 documents are read-only legacy; writers migrate to 2.0.0."
+    },
     "id": { "type": "string", "pattern": "^edl_[a-z0-9-]+_v[0-9]+$" },
     "listingId": { "type": "string", "minLength": 1 },
     "createdAt": { "type": "string", "format": "date-time" },
@@ -32,7 +36,21 @@
     "audio": { "$ref": "#/$defs/Audio" },
     "captions": { "$ref": "#/$defs/Captions" },
     "review": { "$ref": "#/$defs/Review" },
-    "provenance": { "$ref": "#/$defs/Provenance" }
+    "provenance": { "$ref": "#/$defs/Provenance" },
+    "output": {
+      "$ref": "#/$defs/Output",
+      "description": "v2: optional encode overrides. Bounds are enforced at runtime (E_OUTPUT_RANGE)."
+    },
+    "effects": {
+      "type": "array",
+      "maxItems": 20,
+      "description": "v2: timeline-global effects, applied after per-clip effects.",
+      "items": { "$ref": "#/$defs/Effect" }
+    },
+    "grade": {
+      "$ref": "#/$defs/ColorGrade",
+      "description": "v2: global grade, applied after the clip grade. Ranges are enforced at runtime (E_GRADE_RANGE)."
+    }
   },
   "$defs": {
     "Profile": {
@@ -61,6 +79,100 @@
         "height": { "type": "integer", "minimum": 240, "maximum": 4096 },
         "fps": { "type": "number", "minimum": 12, "maximum": 120 },
         "safeArea": { "$ref": "#/$defs/SafeArea" }
+      }
+    },
+    "Output": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "v2: encode overrides. Omitted fields fall back to the render profile. Ranges: width/height 320..7680, fps 12..60.",
+      "properties": {
+        "width": { "type": "integer" },
+        "height": { "type": "integer" },
+        "fps": { "type": "number" },
+        "videoBitrate": { "type": "string", "pattern": "^\\d+[kM]$" },
+        "audioBitrate": { "type": "string", "pattern": "^\\d+k$" }
+      }
+    },
+    "LutPath": {
+      "type": "string",
+      "pattern": "^[A-Za-z0-9._/-]+\\.cube$",
+      "maxLength": 240,
+      "description": "Repo-relative .cube lookup table under data/luts/. No absolute paths and no '..' segments (enforced at runtime as E_LUT_PATH)."
+    },
+    "EffectType": {
+      "type": "string",
+      "enum": [
+        "blur",
+        "motion_blur",
+        "glow",
+        "grain",
+        "vignette",
+        "sharpen",
+        "chromatic_aberration",
+        "saturation",
+        "exposure",
+        "contrast",
+        "lut",
+        "stabilize"
+      ]
+    },
+    "EffectParams": {
+      "type": "object",
+      "description": "Type-specific payload. Allowed keys and numeric bounds are enforced at runtime (E_EFFECT_PARAM / E_EFFECT_RANGE); unknown keys are rejected.",
+      "additionalProperties": { "type": ["number", "string", "boolean"] }
+    },
+    "Effect": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["id", "type"],
+      "properties": {
+        "id": { "type": "string", "pattern": "^e[0-9]{1,3}$" },
+        "type": { "$ref": "#/$defs/EffectType" },
+        "amount": { "type": "number", "description": "0..100 strength for types that have one (E_EFFECT_RANGE)." },
+        "inSec": { "type": "number", "minimum": 0 },
+        "outSec": { "type": "number", "minimum": 0 },
+        "params": { "$ref": "#/$defs/EffectParams" },
+        "enabled": { "type": "boolean", "default": true }
+      }
+    },
+    "GradePreset": {
+      "type": "string",
+      "enum": [
+        "none",
+        "warm_cinematic",
+        "cool_cinematic",
+        "luxury",
+        "natural",
+        "vivid",
+        "noir"
+      ]
+    },
+    "ColorGrade": {
+      "type": "object",
+      "additionalProperties": false,
+      "description": "A preset expands to parameters in the renderer; explicit fields override it. Ranges are enforced at runtime (E_GRADE_RANGE).",
+      "properties": {
+        "preset": { "$ref": "#/$defs/GradePreset" },
+        "exposure": { "type": "number", "description": "-2..2" },
+        "contrast": { "type": "number", "description": "0.5..2" },
+        "saturation": { "type": "number", "description": "0..2" },
+        "temperature": { "type": "number", "description": "-1..1, blue → warm" },
+        "tint": { "type": "number", "description": "-1..1, green → magenta" },
+        "highlights": { "type": "number", "description": "-1..1" },
+        "shadows": { "type": "number", "description": "-1..1" },
+        "vibrance": { "type": "number", "description": "-1..1" },
+        "lut": { "$ref": "#/$defs/LutPath" },
+        "intensity": { "type": "number", "description": "0..1" }
+      }
+    },
+    "SpeedPoint": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t", "speed"],
+      "description": "A speed-ramp knot. Both values are range-checked at runtime (E_SPEED_RAMP).",
+      "properties": {
+        "t": { "type": "number" },
+        "speed": { "type": "number" }
       }
     },
     "FormatRef": {
@@ -115,7 +227,16 @@
             "whip",
             "zoom_blur",
             "luma_wipe",
-            "light_leak"
+            "light_leak",
+            "dip_black",
+            "dip_white",
+            "blur",
+            "directional_blur",
+            "push_left",
+            "push_right",
+            "circle",
+            "wipe",
+            "glitch"
           ]
         },
         "durationSec": { "type": "number", "minimum": 0, "maximum": 1.5 }
@@ -195,7 +316,56 @@
           "maxLength": 160,
           "description": "User-facing justification, plain language. Shown in the shot inspector."
         },
-        "scoreAtSelection": { "type": "number", "minimum": 0, "maximum": 1 }
+        "scoreAtSelection": { "type": "number", "minimum": 0, "maximum": 1 },
+        "effects": {
+          "type": "array",
+          "maxItems": 20,
+          "description": "v2: clip-scoped effects, applied before the clip grade.",
+          "items": { "$ref": "#/$defs/Effect" }
+        },
+        "grade": {
+          "$ref": "#/$defs/ColorGrade",
+          "description": "v2: replaces the root grade for this clip."
+        },
+        "speedRamp": {
+          "type": "array",
+          "minItems": 2,
+          "maxItems": 8,
+          "description": "v2: replaces the scalar speed. Requires speed === 1, first t = 0, last t = 1; the computed duration must match (outSec-inSec)/speed within 0.05s.",
+          "items": { "$ref": "#/$defs/SpeedPoint" }
+        }
+      }
+    },
+    "OverlayFont": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "family": { "type": "string" },
+        "weight": { "type": "number", "description": "100..900 (E_OVERLAY_KEYFRAME)" },
+        "sizePx": { "type": "number" }
+      }
+    },
+    "OverlayBackground": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
+        "radiusPx": { "type": "number", "minimum": 0 }
+      }
+    },
+    "OverlayKeyframe": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["t"],
+      "description": "t is relative to the overlay window; x/y are 0..1 of the canvas.",
+      "properties": {
+        "t": { "type": "number" },
+        "x": { "type": "number" },
+        "y": { "type": "number" },
+        "scale": { "type": "number" },
+        "opacity": { "type": "number" },
+        "rotation": { "type": "number" }
       }
     },
     "Overlay": {
@@ -224,7 +394,65 @@
         "opacity": { "type": "number", "minimum": 0, "maximum": 1 },
         "animation": {
           "type": "string",
-          "enum": ["none", "fade", "rise", "slide_in", "count_up"]
+          "enum": ["none", "fade", "rise", "slide_in", "count_up", "pop", "typewriter", "tracking_in", "blur_in", "scale_in"]
+        },
+        "exitAnimation": {
+          "type": "string",
+          "enum": ["none", "fade", "slide_out"]
+        },
+        "font": { "$ref": "#/$defs/OverlayFont" },
+        "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "background": { "$ref": "#/$defs/OverlayBackground" },
+        "rotation": { "type": "number", "description": "-180..180 (E_OVERLAY_KEYFRAME)" },
+        "keyframes": {
+          "type": "array",
+          "minItems": 1,
+          "maxItems": 24,
+          "description": "v2: t strictly increasing, all values in range (E_OVERLAY_KEYFRAME).",
+          "items": { "$ref": "#/$defs/OverlayKeyframe" }
+        }
+      }
+    },
+    "CaptionFont": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "family": { "type": "string" },
+        "weight": { "type": "number" },
+        "sizePx": { "type": "number" },
+        "uppercase": { "type": "boolean" }
+      }
+    },
+    "CaptionBox": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "opacity": { "type": "number" },
+        "radiusPx": { "type": "number" }
+      }
+    },
+    "CaptionPosition": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "anchor": {
+          "type": "string",
+          "enum": ["bottom_center", "center", "top_center"]
+        },
+        "offsetPx": { "type": "number" }
+      }
+    },
+    "CaptionHighlight": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "color": { "type": "string", "pattern": "^#[0-9A-Fa-f]{6}$" },
+        "words": {
+          "type": "array",
+          "maxItems": 200,
+          "items": { "type": "string" },
+          "description": "Must be a subset of the words present in captions.words (E_CAPTION_STYLE)."
         }
       }
     },
@@ -258,6 +486,33 @@
               "endSec": { "type": "number", "minimum": 0 }
             }
           }
+        },
+        "animation": {
+          "type": "string",
+          "enum": [
+            "none",
+            "fade",
+            "rise",
+            "slide_in",
+            "pop",
+            "typewriter",
+            "word_by_word",
+            "tracking_in",
+            "blur_in",
+            "scale_in"
+          ]
+        },
+        "highlight": { "$ref": "#/$defs/CaptionHighlight" },
+        "font": { "$ref": "#/$defs/CaptionFont" },
+        "box": { "$ref": "#/$defs/CaptionBox" },
+        "position": { "$ref": "#/$defs/CaptionPosition" },
+        "maxWordsPerLine": {
+          "type": "number",
+          "description": "v2: 1..8, cue-builder default 6 (E_CAPTION_STYLE)."
+        },
+        "maxLines": {
+          "type": "number",
+          "description": "v2: 1..3, cue-builder default 2 (E_CAPTION_STYLE)."
         }
       }
     },
@@ -324,6 +579,18 @@
             "lufs": { "type": "number", "minimum": -30, "maximum": -8 },
             "truePeakDbtp": { "type": "number", "minimum": -3, "maximum": 0 }
           }
+        },
+        "fadeInSec": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 5,
+          "description": "v2: music/voice fade-in, 0..5s."
+        },
+        "fadeOutSec": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 5,
+          "description": "v2: music/voice fade-out, 0..5s."
         }
       }
     },

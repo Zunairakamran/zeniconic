@@ -11,6 +11,19 @@ export type Stage = 'index' | 'plan' | 'render' | 'review' | 'done';
 
 export type JobStatus = 'queued' | 'running' | 'failed' | 'cancelled' | 'complete';
 
+/** Which kind of work a job performs. Unset means the legacy analysis pipeline. */
+export type JobKind = 'analysis' | 'export' | 'agent';
+
+export const JOB_KINDS: readonly JobKind[] = ['analysis', 'export', 'agent'];
+
+export const JOB_STATUSES: readonly JobStatus[] = [
+  'queued',
+  'running',
+  'failed',
+  'cancelled',
+  'complete',
+];
+
 /** Ordered stages. `done` is terminal, not a unit of work. */
 export const STAGES: readonly Stage[] = ['index', 'plan', 'render', 'review', 'done'];
 
@@ -31,6 +44,15 @@ export interface JobRecord {
   createdAt: string;
   updatedAt: string;
   progress?: JobProgress;
+  /**
+   * Additive, optional fields. Old records without them stay valid; a reader
+   * must never assume they are present.
+   */
+  kind?: JobKind;
+  /** Opaque resume token for the executor (e.g. an artifact path). */
+  checkpoint?: string;
+  /** Stable failure code for logs; the UI still renders `error`. */
+  errorCode?: string;
 }
 
 /**
@@ -49,6 +71,14 @@ export function isTerminal(status: JobStatus): boolean {
 
 export function isStage(value: string): value is Stage {
   return (STAGES as readonly string[]).includes(value);
+}
+
+export function isJobStatus(value: unknown): value is JobStatus {
+  return typeof value === 'string' && (JOB_STATUSES as readonly string[]).includes(value);
+}
+
+export function isJobKind(value: unknown): value is JobKind {
+  return typeof value === 'string' && (JOB_KINDS as readonly string[]).includes(value);
 }
 
 /** The stage after `stage`, or `undefined` once `done` is reached. */

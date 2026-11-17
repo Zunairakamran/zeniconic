@@ -35,18 +35,19 @@ describe('estimateTaggingCost', () => {
     expect(estimate.inputTokens).toBe(69_977);
     expect(estimate.outputTokens).toBe(19 * TAGGING_OUTPUT_TOKENS_PER_CALL);
     expect(estimate.outputTokens).toBe(13_300);
-    // 69,977 prompt × $0.825/M + 13,300 completion × $4.125/M
-    expect(estimate.usd).toBeCloseTo(0.11259353, 8);
+    // 69,977 prompt tokens at 
+    // 69,977 prompt × $0.75/M + 13,300 completion × $3.75/M.75/M plus 13,300 completion at $3.75/M
+    expect(estimate.usd).toBeCloseTo(0.10235775, 8);
     expect(estimate.usd).toBeLessThan(TAGGING_BUDGET_USD);
-    expect(estimate.inputUsdPerMillion).toBeCloseTo(0.825, 8);
-    expect(estimate.outputUsdPerMillion).toBeCloseTo(4.125, 8);
+    expect(estimate.inputUsdPerMillion).toBeCloseTo(0.75, 8);
+    expect(estimate.outputUsdPerMillion).toBeCloseTo(3.75, 8);
   });
 
   it('covers the measured 24-call bill instead of quoting a fifth of it', () => {
     const estimate = estimateTaggingCost(24, MODEL);
 
     // The audit's real run: 24 calls billed $0.1268 against the old $0.0238.
-    expect(estimate.usd).toBeCloseTo(0.1422234, 8);
+    expect(estimate.usd).toBeCloseTo(0.129294, 8);
     expect(estimate.usd).toBeGreaterThan(0.1268);
     expect(estimate.usd).toBeLessThan(TAGGING_BUDGET_USD);
   });
@@ -80,9 +81,9 @@ describe('dry-run estimate', () => {
     expect(lines[0]).toContain('3683 prompt');
     expect(lines[0]).toContain('700 completion');
     expect(lines[0]).toContain('69977 + 13300 tokens');
-    expect(lines[1]).toContain('$0.825/M in');
-    expect(lines[1]).toContain('$4.125/M out');
-    expect(lines[1]).toContain('$0.1126');
+    expect(lines[1]).toContain('$0.750/M in');
+    expect(lines[1]).toContain('$3.750/M out');
+    expect(lines[1]).toContain('$0.1024');
     expect(lines[2]).toContain('within the $1.00 tagging budget');
   });
 
@@ -108,8 +109,8 @@ describe('dry-run estimate', () => {
       inputTokens: 0,
       outputTokens: 0,
       model: MODEL,
-      inputUsdPerMillion: 0.825,
-      outputUsdPerMillion: 4.125,
+      inputUsdPerMillion: 0.75,
+      outputUsdPerMillion: 3.75,
       usd: 1,
     };
     expect(() => assertTaggingBudget(atCap)).not.toThrow();

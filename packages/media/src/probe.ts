@@ -202,3 +202,60 @@ export async function probe(
 
   return parseProbeJson(parsed);
 }
+
+export interface AudioProbeResult {
+  durationSec: number;
+  sampleRate: number;
+  channels: number;
+  codec: string;
+}
+
+/** Audio-only counterpart of `parseProbeJson`; a video stream is not required. */
+export function parseAudioProbeJson(raw: unknown): AudioProbeResult {
+  if (!isObject(raw)) {
+    throw new TypeError('Cannot parse ffprobe output: expected a JSON object.');
+  }
+  const streams = asArray(raw.streams).filter(isObject);
+  const audio = streams.find((stream) => stream.codec_type === 'audio');
+  if (audio === undefined) {
+    throw new RangeError('Cannot probe audio: the file has no audio stream.');
+  }
+  const format = isObject(raw.format) ? raw.format : {};
+  const durationSec = asNumber(format.duration) ?? asNumber(audio.duration);
+  if (durationSec === undefined || durationSec <= 0) {
+    throw new RangeError('Cannot probe audio: the file reports no duration.');
+  }
+  const sampleRate = asNumber(audio.sample_rate);
+  const channels = asNumber(audio.channels);
+  if (sampleRate === undefined || sampleRate <= 0) {
+    throw new RangeError('Cannot probe audio: the stream has no sample rate.');
+  }
+  return {
+    durationSec: round3(durationSec),
+    sampleRate: Math.round(sampleRate),
+    channels: channels === undefined ? 1 : Math.round(channels),
+    codec: asString(audio.codec_name) ?? 'unknown',
+  };
+}
+
+/** Probes an audio file (music bed, voice take) without requiring video. */
+export async function probeAudio(
+  file: string,
+  runner: Runner = nodeRunner,
+): Promise<AudioProbeResult> {
+  const result = await runner.run(ffprobePath(), [
+    '-v', 'error', '-print_format', 'json', '-show_format', '-show_streams', file,
+  ]);
+  if (result.code !== 0) {
+    throw new Error(
+      `ffprobe could not read "${file}" (exit ${result.code}): ${result.stderr.trim() || 'no error output'}`,
+    );
+  }
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(result.stdout);
+  } catch (error) {
+    throw new Error(`ffprobe returned invalid JSON for "${file}".`, { cause: error });
+  }
+  return parseAudioProbeJson(parsed);
+}

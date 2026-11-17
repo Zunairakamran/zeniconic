@@ -19,7 +19,7 @@ import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { toCues, toSrt } from '../../packages/captions/src/index';
 import type { Cue } from '../../packages/captions/src/index';
-import type { CaptionWord, Edl } from '../../packages/edl/src/index';
+import type { CaptionWord, Edl, TextAnimation } from '../../packages/edl/src/index';
 import { ffmpegPath, probe } from '../../packages/media/src/index';
 import { PROFILES } from '../../packages/render/src/index';
 import type { ProfileId, Quality } from '../../packages/render/src/index';
@@ -187,11 +187,308 @@ function assText(text: string): string {
   return text.replace(/[{}]/g, '').replace(/\\/g, '/').replace(/\r?\n/g, '\\N');
 }
 
+// ---------------------------------------------------------------------------
+// Caption animation (the EDL's `captions.animation`, drawn with ASS overrides)
+// ---------------------------------------------------------------------------
+
+/**
+ * The caption animations this path draws. `word_stagger` is not an EDL value;
+ * anything outside this set (a hand-edited typo, `undefined`) becomes `fade`.
+ *
+ * Which modes are exact, and which are approximations:
+ *
+ * | animation      | ASS tags                                     | fidelity |
+ * |----------------|----------------------------------------------|----------|
+ * | `none`         | no dialogue at all                           | exact |
+ * | `fade`         | `\blur2` (the pre-animation look)            | exact |
+ * | `pop`          | `\fad` + two `\t` scale steps                 | close: two-step overshoot, not an eased arc |
+ * | `rise`         | `\move` up 6 px + `\fad`                      | exact (linear move; no ease-out curve) |
+ * | `slide_in`     | `\move` in 32 px from the left + `\fad`       | exact (linear move) |
+ * | `tracking_in`  | `\fsp 8` → `\t(0,300,\fsp-1)` + `\fad`        | approximation: libass interpolates spacing linearly per glyph, so the text reflows |
+ * | `blur_in`      | `\blur8` → `\t(0,300,\blur0)` + `\fad`        | approximation: libass has no eased blur, only the `\t` ramp |
+ * | `scale_in`     | `\fscx118\fscy118` → `\t(0,360,…100)` + `\fad` | exact (one linear scale ramp) |
+ * | `word_by_word` | one dialogue per word, `\an1\pos` + `\fad`    | approximation: glyph advances are estimated, so word spacing is uniform rather than Bricolage's true metrics |
+ * | `typewriter`   | one dialogue per character at 20 chars/s      | approximation: same advance estimate; characters appear rather than the line growing from a fixed layout |
+ *
+ * ASS cannot measure a font, so the per-word/per-character x positions come
+ * from `glyphEm`, a deterministic advance table. All words of a cue share the
+ * table, so they never overlap; only the line's overall width differs slightly
+ * from libass's own centring.
+ */
+const ASS_CAPTION_ANIMATIONS: ReadonlySet<string> = new Set<string>([
+  'none',
+  'fade',
+  'rise',
+  'slide_in',
+  'pop',
+  'typewriter',
+  'word_by_word',
+  'tracking_in',
+  'blur_in',
+  'scale_in',
+]);
+
+/** Fade-in for the animated entrances; libass `\fad` takes milliseconds. */
+export const ASS_FADE_IN_MS = 120;
+/** Gap between `word_by_word` events inside one cue. */
+export const ASS_WORD_STAGGER_SEC = 0.05;
+/** `typewriter` reveal rate, characters per second. */
+export const ASS_TYPEWRITER_CHARS_PER_SEC = 20;
+/** Pixels `rise` travels up into place. */
+export const ASS_RISE_PX = 6;
+/** Pixels `slide_in` travels in from the safe edge. */
+export const ASS_SLIDE_PX = 32;
+/** `\fsp` the tracking entrance starts at, settling on `\fsp-1`. */
+export const ASS_TRACKING_START = 8;
+export const ASS_TRACKING_REST = -1;
+/** `\blur` the blur entrance starts at. */
+export const ASS_BLUR_START = 8;
+/** `\fscx`/`\fscy` percentage the scale entrance starts at. */
+export const ASS_SCALE_IN_START = 118;
+
+/**
+ * The EDL's caption animation, normalised: unknown or absent is `fade`, which
+ * is what the ASS path drew before animations existed.
+ */
+export function captionAnimationFor(edl: Edl): TextAnimation {
+  const value: unknown = edl.captions.animation;
+  return typeof value === 'string' && ASS_CAPTION_ANIMATIONS.has(value)
+    ? (value as TextAnimation)
+    : 'fade';
+}
+
+/** The ASS script geometry the cue builder draws with, in canvas pixels. */
+interface AssFrame {
+  width: number;
+  height: number;
+  fontSize: number;
+  marginV: number;
+  marginL: number;
+  marginR: number;
+}
+
+interface AssEvent {
+  startSec: number;
+  endSec: number;
+  /** Override block without braces. */
+  tags: string;
+  /** Escaped, uppercase text as drawn. */
+  text: string;
+}
+
+interface PlacedWord {
+  text: string;
+  /** Canvas x of the word's left edge. */
+  x: number;
+}
+
+interface PlacedChar {
+  text: string;
+  x: number;
+}
+
+interface PlacedLine {
+  /** Canvas y of the line's bottom edge. */
+  bottom: number;
+  words: PlacedWord[];
+  chars: PlacedChar[];
+}
+
+/** Advance widths in em, for the placement estimate only. */
+function glyphEm(character: string): number {
+  if (character === ' ') return 0.3;
+  if (/[.,;:!?'"’”“-]/.test(character)) return 0.28;
+  if (/[0-9]/.test(character)) return 0.58;
+  if (/[A-Z]/.test(character)) return 0.66;
+  return 0.58;
+}
+
+function measureEm(text: string): number {
+  let total = 0;
+  for (const character of text) total += glyphEm(character);
+  return total;
+}
+
+/**
+ * Places one laid-out line. Words and characters are positioned from the same
+ * advance table, so a per-word event lands where the word sits in the whole
+ * line and the line never jumps when the animation settles.
+ */
+function placeLine(
+  text: string,
+  lineIndex: number,
+  lineCount: number,
+  frame: AssFrame,
+): PlacedLine {
+  const width = measureEm(text) * frame.fontSize;
+  const centred = (frame.width - width) / 2;
+  const left = Math.min(
+    Math.max(frame.marginL, centred),
+    Math.max(frame.marginL, frame.width - frame.marginR - width),
+  );
+  const bottom =
+    frame.height -
+    frame.marginV -
+    (lineCount - 1 - lineIndex) * Math.round(frame.fontSize * CAPTION_LINE_HEIGHT);
+
+  const words: PlacedWord[] = [];
+  const chars: PlacedChar[] = [];
+  let cursorEm = 0;
+  let wordEm = 0;
+  let wordText = '';
+
+  const flushWord = (): void => {
+    if (wordText.length > 0) {
+      words.push({ text: wordText, x: left + wordEm * frame.fontSize });
+      wordText = '';
+    }
+  };
+
+  for (const character of text) {
+    if (character === ' ') {
+      flushWord();
+      cursorEm += glyphEm(character);
+      wordEm = cursorEm;
+      continue;
+    }
+    if (wordText.length === 0) wordEm = cursorEm;
+    wordText += character;
+    chars.push({ text: character, x: left + cursorEm * frame.fontSize });
+    cursorEm += glyphEm(character);
+  }
+  flushWord();
+
+  return { bottom, words, chars };
+}
+
+function assPx(value: number): string {
+  return String(Math.max(0, Math.round(value)));
+}
+
+/**
+ * The override block for a whole-cue entrance. `fade` is deliberately the
+ * exact string the path drew before animations existed, so a default EDL
+ * renders byte-identically.
+ */
+function entranceTags(animation: TextAnimation, frame: AssFrame): string {
+  const centreX = frame.width / 2;
+  const baseY = frame.height - frame.marginV;
+
+  switch (animation) {
+    case 'pop':
+      return `\\blur2\\fad(${String(ASS_FADE_IN_MS)},0)\\t(0,160,\\fscx112\\fscy112)\\t(160,260,\\fscx100\\fscy100)`;
+    case 'rise':
+      return `\\blur2\\fad(220,0)\\move(${assPx(centreX)},${assPx(baseY + ASS_RISE_PX)},${assPx(centreX)},${assPx(baseY)},0,220)`;
+    case 'slide_in':
+      return `\\blur2\\fad(220,0)\\move(${assPx(centreX - ASS_SLIDE_PX)},${assPx(baseY)},${assPx(centreX)},${assPx(baseY)},0,220)`;
+    case 'tracking_in':
+      return `\\blur2\\fad(300,0)\\fsp${String(ASS_TRACKING_START)}\\t(0,300,\\fsp${String(ASS_TRACKING_REST)})`;
+    case 'blur_in':
+      return `\\fad(300,0)\\blur${String(ASS_BLUR_START)}\\t(0,300,\\blur0)`;
+    case 'scale_in':
+      return `\\blur2\\fad(360,0)\\fscx${String(ASS_SCALE_IN_START)}\\fscy${String(ASS_SCALE_IN_START)}\\t(0,360,\\fscx100\\fscy100)`;
+    default:
+      // `fade` (and any unknown the caller let through) draws the original look.
+      return '\\blur2';
+  }
+}
+
+/**
+ * `word_by_word`: one event per word, each holding only its own word, on the
+ * line's baseline. The stagger is 50 ms a word unless the cue is too short,
+ * in which case it tightens so every word still appears before the cue ends
+ * and before the next cue starts.
+ */
+function wordEvents(cue: Cue, frame: AssFrame, limitSec: number): AssEvent[] {
+  const lines = cue.lines
+    .map((line) => assText(line.toUpperCase()))
+    .filter((line) => line.trim().length > 0);
+  if (lines.length === 0) return [];
+
+  const placed = lines.map((line, index) => placeLine(line, index, lines.length, frame));
+  const words = placed.flatMap((line) =>
+    line.words.map((word) => ({ ...word, bottom: line.bottom })),
+  );
+  if (words.length === 0) return [];
+
+  const available = limitSec - cue.startSec;
+  if (available <= 0) return [];
+  const step = Math.min(ASS_WORD_STAGGER_SEC, words.length > 1 ? available / words.length : 0);
+
+  return words.map((word, index) => ({
+    startSec: cue.startSec + index * step,
+    endSec: limitSec,
+    tags: `\\an1\\pos(${assPx(word.x)},${assPx(word.bottom)})\\blur2\\fad(${String(ASS_FADE_IN_MS)},0)`,
+    text: word.text,
+  }));
+}
+
+/**
+ * `typewriter`: one event per character at 20 chars/s, each character on its
+ * line's baseline. Spaces need no event; they only advance the layout. The
+ * rate tightens for a short cue so no character is dropped and nothing is
+ * drawn past the cue end or over the next cue.
+ */
+function typewriterEvents(cue: Cue, frame: AssFrame, limitSec: number): AssEvent[] {
+  const lines = cue.lines
+    .map((line) => assText(line.toUpperCase()))
+    .filter((line) => line.trim().length > 0);
+  if (lines.length === 0) return [];
+
+  const placed = lines.map((line, index) => placeLine(line, index, lines.length, frame));
+  const chars = placed.flatMap((line) =>
+    line.chars.map((char) => ({ ...char, bottom: line.bottom })),
+  );
+  if (chars.length === 0) return [];
+
+  const available = limitSec - cue.startSec;
+  if (available <= 0) return [];
+  const step = Math.min(
+    1 / ASS_TYPEWRITER_CHARS_PER_SEC,
+    chars.length > 1 ? available / chars.length : 0,
+  );
+
+  return chars.map((char, index) => ({
+    startSec: cue.startSec + index * step,
+    endSec: limitSec,
+    tags: `\\an1\\pos(${assPx(char.x)},${assPx(char.bottom)})\\blur2`,
+    text: char.text,
+  }));
+}
+
+/** Every dialogue event for one cue, in paint order. */
+function assEventsForCue(
+  cue: Cue,
+  animation: TextAnimation,
+  frame: AssFrame,
+  limitSec: number,
+): AssEvent[] {
+  if (animation === 'none') return [];
+
+  const text = assText(cue.lines.join('\n').toUpperCase());
+  if (text.trim().length === 0) return [];
+
+  if (animation === 'word_by_word') return wordEvents(cue, frame, limitSec);
+  if (animation === 'typewriter') return typewriterEvents(cue, frame, limitSec);
+
+  return [
+    {
+      startSec: cue.startSec,
+      endSec: cue.endSec,
+      tags: entranceTags(animation, frame),
+      text,
+    },
+  ];
+}
+
 /**
  * Builds the ASS document libass burns.
  *
  * Style: Bricolage Grotesque 800, uppercase, centred, 76 px at 1080 wide,
  * 3 px outline, 2 px soft shadow, no plate, bottom margin = safeArea.bottom.
+ * The entrance comes from `edl.captions.animation` and is drawn with override
+ * tags; `fade` (the default) and hand-edited unknowns keep the original
+ * static output. `none` draws no captions at all.
  */
 export function buildAssDocument(
   edl: Edl,
@@ -227,12 +524,29 @@ export function buildAssDocument(
     'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
   ];
 
-  for (const cue of cues) {
-    const text = assText(cue.lines.join('\n').toUpperCase());
-    if (text.trim().length === 0) continue;
-    lines.push(
-      `Dialogue: 0,${assTime(cue.startSec)},${assTime(cue.endSec)},ZenCaption,,0,0,0,,{\\blur2}${text}`,
-    );
+  const animation = captionAnimationFor(edl);
+  const frame: AssFrame = {
+    width: canvas.width,
+    height: canvas.height,
+    fontSize: size,
+    marginV,
+    marginL,
+    marginR,
+  };
+
+  for (let index = 0; index < cues.length; index += 1) {
+    const cue = cues[index];
+    if (cue === undefined) continue;
+    const next = cues[index + 1];
+    // Word and character events stop at the cue end, which is already the next
+    // cue's start; clamp anyway so a hand-built cue list cannot overlap.
+    const limitSec = Math.min(cue.endSec, next?.startSec ?? cue.endSec);
+
+    for (const event of assEventsForCue(cue, animation, frame, limitSec)) {
+      lines.push(
+        `Dialogue: 0,${assTime(event.startSec)},${assTime(event.endSec)},ZenCaption,,0,0,0,,{${event.tags}}${event.text}`,
+      );
+    }
   }
 
   return `${lines.join('\n')}\n`;
@@ -635,7 +949,9 @@ export async function renderFfmpegOverlays(
   const overlayDir = join(options.workDir, 'overlays');
   await mkdir(overlayDir, { recursive: true });
 
-  const cues = options.burnCaptions ? captionCuesForExport(options.edl) : [];
+  const animation = captionAnimationFor(options.edl);
+  const cues: Cue[] =
+    options.burnCaptions && animation !== 'none' ? captionCuesForExport(options.edl) : [];
   let assPath: string | undefined;
 
   if (cues.length > 0) {

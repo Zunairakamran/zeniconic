@@ -16,21 +16,33 @@ short audio slices go to the model provider.
 | Source | private `Zunairakamran/zeniconic`, branch `main` |
 | Releases | public `Zunairakamran/zeniconic-releases`, tag `v0.1.0` |
 | Installer | `Zeniconic-Setup-0.1.0-x64.exe`, ~198 MB, unsigned |
-| Tests | 820+ vitest, 66/66 route checks, both themes AA |
+| Tests | 1442 root + 75 renderer vitest, 66/66 route checks, both themes AA |
 | Data | dev `D:\video\data`, packaged `%APPDATA%\Zeniconic\data` |
 
 ## Shipped and wired
 
 - **Intake → analysis**: folder picker, indexing, vision tagging, cost estimate,
   facts persistence (`listings:updateFacts`, AED).
-- **Planning**: three 30 s looks plus the `marketing_38` beat sheet
-  (hook → light → ritual → craft → space → entrance/lift → price → close).
+- **Planning**: four variants — the three 30 s looks plus the 38 s
+  `marketing38` beat sheet (hook → light → ritual → craft → space → lift →
+  price → close).
 - **Variants / export**: approve, preview, export 9:16 / 16:9 / 1:1; two-pass
-  loudness, SRT + cover, review gate, FFmpeg-first marketing render.
+  loudness, SRT + cover, review gate, FFmpeg-first marketing render; per-clip
+  segment cache for re-renders.
 - **Voice**: Kokoro downloader (resumable, checksummed) **and** ElevenLabs
   `eleven-v4` through OpenRouter with a Settings gallery (matilda default,
   bundled samples, `voice:list` / `voice:setVoice`). Presenter audio restore.
-- **Chat refine**: `chat:send/apply/versions` with semantic guardrails.
+- **Chat refine**: `chat:send/apply/versions` with semantic guardrails, plus the
+  agentic editor (`agent:run/approve`, approvals, real draft playback).
+- **Reference style**: local analysis feeds both agent guidance and planner
+  pacing (`referenceStyle.averageShotSec`).
+- **Music**: Lyria 3 Pro generation through OpenRouter, selected bed persisted.
+- **Performance**: per-clip segment cache for the FFmpeg picture pass, with
+  atomic manifests and 14-day prune.
+- **Reliability**: persisted jobs resume after a hard kill and reuse a verified
+  footage index (verified smoke).
+- **Remix**: scene split, three preset orders, transcription + captions, manual
+  move up/down, per-slot room tags, provider-reported transcription cost.
 - **Settings**: key in safeStorage, data folder, spend, version, voice model.
 - **Shell**: splash ident, auto-update from the public releases repo, CSP.
 - **Packaging**: NSIS installer; `sharp` + `detect-libc` + `semver` now bundled
@@ -38,57 +50,24 @@ short audio slices go to the model provider.
 
 ## Built but not wired
 
-- `services/remix/**`: `splitScenes`, `buildCandidates`, `createTranscriber`
-  (Scribe v2), `buildMarketingOrder` / `buildOriginalOrder` / `buildPriceLedOrder`,
-  `cleanCaptions`. 56 tests. **No IPC channels, no screen, no job type yet.**
-  To wire: add `remix:start/preview` + a job, a Home entry “Improve a video”,
-  file picker, storyboard review, then feed the slots into the existing planner.
-
-## Delivery cuts (client review)
-
-Two cuts are the current best answer to the rejected tour:
-
-- `data/marketing/out/deliver_focus.mp4` — his voice throughout, location-first
-  opening (font-cycling `DUBAI MARINA` hook, 6 fonts / 2 frames), 2.6 s
-  blur-to-clear, proximity card, presenter hook, elevator at ~24 s, price,
-  private-viewing close.
-- `data/marketing/out/deliver_hybrid.mp4` — same picture; his opening line, then
-  matilda with ElevenLabs emotion tags.
-
-Copies for handover: `deliverables/2026-11-17/`. Scripts: `scripts/marketing/`
-(`render-deliver.mjs`, `master.mjs`, `generate-voice.mjs`,
-`generate-emotional.mjs`, `generate-music.mjs`, `transcribe.mjs`).
-
-### Decisions still open
-
-1. **Price**: reference says one-bedroom from **AED 1,400,000**; stored listing
-   facts say **3 bed · 2 bath at AED 1,850,000**. The cuts use 1.4 M.
-2. **Proximity claims**: Marina Walk 1 min, Spinneys 3 min, Marina Mall 5 min,
-   JBR 10 min walk. Sourced from the building listing + area guides; confirm
-   before publishing.
-3. **Agent contact** for the end card (name, WhatsApp) — not in the data yet.
-4. **Music clearance**: the Lyria beds are AI-generated and not unambiguously
-   cleared for client work (`docs/MUSIC-LICENCES.md`). Get a licensed track for
-   delivery, or record sign-off.
+Nothing major. Remix, the agentic editor, reference-guided planning, Lyria music,
+the segment cache, real Refine playback and crash-safe resume are all wired and
+tested. The remaining items are stretch features, not broken wiring.
 
 ## Known gaps / next tasks, in order
 
-1. **Remix UI** — the biggest missing feature. Wire the modules, add the screen,
-   run a real 2-minute edit end to end.
-2. **Location claims in the app** — the marketing copy and proximity card are
-   script-only; move them into the planner/copy layer so the app generates them.
-3. **Variant wiring** — `planVariants` still emits the three 30 s looks; expose
-   `marketing_38` as a variant so the app can produce these cuts.
-4. **Facts address** — `listings:updateFacts` accepts `address` but the store
-   keeps the top-level one; decide mirror vs reject.
-5. **Analysis enqueue** — `analysis:start` enqueues before `prepareAnalysis`;
-   a throw leaves an orphan job.
-6. **Single-instance lock** — two instances can race on the model `.part`.
-7. **Packaged voice E2E** — download + synthesis inside the installed app is
-   still unproven (module-level verified).
-8. **CI workflows** — local only; token lacks `workflow` scope.
-9. **Code signing** — SmartScreen warning until an OV/EV certificate is used.
-10. **Batch export, job persistence, Arabic voice** — deferred.
+1. **Marketing cache** — `marketing_38` renders in one graph and skips the
+   segment cache; decide whether to segment it.
+2. **4K / custom output** — profiles are 1080-based; custom output is schema-only.
+3. **Location claims in the app** — the marketing copy and proximity card are
+   still partly script-only; move them into the planner/copy layer.
+4. **Packaged voice E2E** — Kokoro download + synthesis inside the installed app
+   is still unproven (Gemini/ElevenLabs are live-verified).
+5. **Transcription pricing** — cost is recorded when the provider reports it;
+   pin a documented Scribe per-second rate for the pre-flight estimate.
+6. **CI workflows** — local only; token lacks `workflow` scope.
+7. **Code signing** — SmartScreen warning until an OV/EV certificate is used.
+8. **Batch export, Arabic voice** — deferred.
 
 ## Environment and secrets
 

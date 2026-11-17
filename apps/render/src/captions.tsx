@@ -7,6 +7,18 @@
  * animation. Social Bold is the default, so an EDL with no style renders
  * exactly as it did before the style object existed.
  *
+ * Every EDL `TextAnimation` (`none`, `fade`, `rise`, `slide_in`, `pop`,
+ * `typewriter`, `word_by_word`, `tracking_in`, `blur_in`, `scale_in`, plus the
+ * legacy `word_stagger`) is drawn here from `captionEntrance` in
+ * `packages/overlays/src/captions` — one pure, tested timing table, cue-relative
+ * and fps-aware. Word-by-word and typewriter reveal inside a fixed box, so the
+ * line never reflows as the text appears. `reduceMotion` drops the spatial
+ * moves and keeps the reveals; Remotion has no media query, so the composition
+ * passes it.
+ *
+ * This is the Remotion path only. The FFmpeg/ASS marketing renderer draws
+ * static captions and animates none of this.
+ *
  * Arabic sets `direction: rtl`, uses an Arabic-capable fallback face and
  * mirrors alignment and padding; the line order is never reversed by hand.
  *
@@ -14,17 +26,20 @@
  * without a DOM.
  */
 
-import type { CSSProperties } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import { AbsoluteFill, useCurrentFrame } from 'remotion';
 import { RTL_FALLBACK_STACK } from '../../../packages/overlays/src/index';
 import {
+  CAPTION_MOTION_BASE_WIDTH,
   CAPTION_PRESETS,
+  captionEntrance as captionEntranceState,
   resolveCaptionStyle,
 } from '../../../packages/overlays/src/captions';
 import type {
   CaptionAccent,
   CaptionAlign,
   CaptionAnimation,
+  CaptionEntranceState,
   CaptionStyle,
   CaptionStyleInput,
 } from '../../../packages/overlays/src/captions';
@@ -45,7 +60,11 @@ export const CAPTION_PLATE_PADDING_Y_BASE = 18;
 export const CAPTION_PLATE_PADDING_X_BASE = 24;
 export const CAPTION_PLATE_RADIUS_BASE = 8;
 
-/** Cue entrance: fade in while rising this many pixels over this many frames. */
+/**
+ * Legacy cue entrance used by the four-argument `captionEntrance` below:
+ * fade in while rising this many pixels over this many frames. The drawn
+ * captions use the fps-aware table in the overlay package instead.
+ */
 export const CAPTION_ENTRANCE_FRAMES = 8;
 export const CAPTION_RISE_BASE = 6;
 /** Word stagger: the last word starts no later than this fraction of 8 frames. */
@@ -64,6 +83,15 @@ export const CAPTION_FONT_STACKS: Readonly<Record<CaptionStyle['font'], string>>
   instrument_serif: "'Instrument Serif', 'Iowan Old Style', 'Times New Roman', Georgia, serif",
 });
 
+/**
+ * Legacy block entrance, kept for the helpers the caption tests pin.
+ *
+ * The composition itself now draws `captionEntrance` from
+ * `packages/overlays/src/captions`, which covers every EDL `TextAnimation`
+ * (blur, tracking, typewriter, word-by-word, slide, scale) and takes an fps.
+ * This older four-argument form only knows pop / fade / word_stagger and stays
+ * exported so an existing import cannot break.
+ */
 export interface CaptionEntrance {
   opacity: number;
   /** Pixels to push the block down from its resting position; 0 once settled. */
@@ -107,8 +135,11 @@ export interface CaptionWordEntrance {
 }
 
 /**
- * Per-word entrance for `word_stagger`. Every other animation leaves the word
- * fully visible, so the block animation owns the motion.
+ * Per-word entrance for the pre-EDL `word_stagger` helper. The composition
+ * itself now reveals words through `word_by_word` / `visibleWords` from the
+ * overlay package; this stays exported because the caption tests (and any
+ * outside import) pin its four-argument form. Every other animation leaves the
+ * word fully visible, so the block animation owns the motion.
  */
 export function captionWordEntrance(
   frame: number,
@@ -240,12 +271,17 @@ export function captionRuleStyle(
   };
 }
 
-/** Text style. RTL keeps its own direction, alignment, face and zero tracking. */
+/**
+ * Text style. RTL keeps its own direction, alignment, face and zero tracking.
+ * `letterSpacingEm` lets `tracking_in` start wide and settle; it defaults to
+ * the resting `CAPTION_TRACKING` token.
+ */
 export function captionTextStyle(
   cue: Pick<CaptionCueFrames, 'rtl'>,
   canvas: CanvasSpec,
   colours: ResolvedColours,
   styleInput?: CaptionStyleInput,
+  letterSpacingEm?: number,
 ): CSSProperties {
   const style = resolveCaptionStyle(styleInput);
   const align = resolvedAlign(style, cue.rtl);
@@ -260,7 +296,11 @@ export function captionTextStyle(
     fontSize: px(style.sizeBase, canvas),
     fontWeight: style.weight,
     lineHeight: CAPTION_LINE_HEIGHT,
-    letterSpacing: cue.rtl ? 0 : CAPTION_TRACKING,
+    letterSpacing: cue.rtl
+      ? 0
+      : letterSpacingEm === undefined
+        ? CAPTION_TRACKING
+        : `${letterSpacingEm}em`,
     textTransform: cue.rtl
       ? 'none'
       : style.case === 'upper'
@@ -308,72 +348,135 @@ export interface CaptionLayerProps {
   canvas: CanvasSpec;
   colours: ResolvedColours;
   style?: CaptionStyleInput;
+  /**
+   * Reduced motion. Remotion has no media query, so the composition passes
+   * the user's preference here; default false. When true the entrance keeps
+   * its opacity ramp and its character/word reveal but loses every spatial
+   * move (rise, horizontal slide, scale, blur, tracking).
+   */
+  reduceMotion?: boolean;
 }
 
-export function CaptionLayer({ cues, canvas, colours, style: styleInput }: CaptionLayerProps) {
+function tokensOf(lines: readonly string[]): string[][] {
+  return lines.map((line) => line.split(/\s+/).filter((token) => token.length > 0));
+}
+
+/**
+ * The transform for the caption block at one frame.
+ *
+ * `slide_in` pushes in from the script's leading edge, so LTR starts 32 px to
+ * the left of rest and RTL 32 px to the right; `translateX` in the entrance
+ * state is the unsigned distance. At rest this is
+ * `translate3d(0px, 0px, 0) scale(1.000)` for every animation, which is the
+ * pose the renderer drew before this helper existed.
+ */
+export function captionMotionTransform(
+  motion: Pick<CaptionEntranceState, 'translateX' | 'translateY' | 'scale'>,
+  rtl: boolean,
+): string {
+  const translateX = rtl ? motion.translateX : -motion.translateX;
+  return `translate3d(${translateX}px, ${motion.translateY}px, 0) scale(${motion.scale.toFixed(3)})`;
+}
+
+export function CaptionLayer({
+  cues,
+  canvas,
+  colours,
+  style: styleInput,
+  reduceMotion = false,
+}: CaptionLayerProps) {
   const frame = useCurrentFrame();
   const style = resolveCaptionStyle(styleInput);
   const cue = cues.find((item) => frame >= item.startFrame && frame < item.endFrame);
   if (!cue || cue.lines.length === 0) return null;
 
-  const entrance = captionEntrance(frame, cue.startFrame, canvas, style.animation);
-  const accent = captionAccentTarget(cue.lines, style.accent);
-  const rule = captionRuleStyle(canvas, colours, cue, style);
-  const totalWords = cue.lines.reduce(
-    (sum, line) => sum + line.split(/\s+/).filter((token) => token.length > 0).length,
+  const lineTokens = tokensOf(cue.lines);
+  const totalWords = lineTokens.reduce((sum, tokens) => sum + tokens.length, 0);
+  const totalChars = lineTokens.reduce(
+    (sum, tokens) => sum + tokens.reduce((chars, token) => chars + Array.from(token).length, 0),
     0,
   );
 
+  // Every EDL TextAnimation, cue-relative frame, fps-aware timing.
+  const motion = captionEntranceState(style.animation, frame - cue.startFrame, canvas.fps, {
+    scale: canvas.width / CAPTION_MOTION_BASE_WIDTH,
+    wordCount: totalWords,
+    charCount: totalChars,
+    reduceMotion,
+  });
+
+  const accent = captionAccentTarget(cue.lines, style.accent);
+  const rule = captionRuleStyle(canvas, colours, cue, style);
+  const visibleWords = motion.visibleWords;
+  const visibleChars = motion.visibleChars;
+
   let wordIndex = 0;
+  // Typewriter counts characters, not the spaces between words: the space
+  // after a word appears with the word.
+  let charCursor = 0;
 
   return (
     <AbsoluteFill style={{ pointerEvents: 'none' }}>
       <div style={captionAnchorStyle(cue, canvas, style)}>
         <div
           style={{
-            opacity: entrance.opacity,
-            transform: `translateY(${entrance.offsetY}px) scale(${entrance.scale.toFixed(3)})`,
+            opacity: motion.opacity,
+            transform: captionMotionTransform(motion, cue.rtl),
+            ...(motion.blurPx > 0 ? { filter: `blur(${motion.blurPx}px)` } : {}),
           }}
         >
           <div style={captionPlateStyle(canvas, style)}>
             {rule ? <div style={rule} /> : null}
-            <div style={captionTextStyle(cue, canvas, colours, style)}>
-              {cue.lines.map((line, lineIndex) => {
-                const tokens = line.split(/\s+/).filter((token) => token.length > 0);
+            <div
+              style={captionTextStyle(
+                cue,
+                canvas,
+                colours,
+                style,
+                motion.letterSpacingEm,
+              )}
+            >
+              {lineTokens.map((tokens, lineIndex) => {
                 const rendered = tokens.map((token, tokenIndex) => {
                   const index = wordIndex;
                   wordIndex += 1;
-                  const word = captionWordEntrance(
-                    frame,
-                    cue.startFrame,
-                    index,
-                    totalWords,
-                    canvas,
-                    style.animation,
-                  );
-                  const isAccent = accent !== null && accent.line === lineIndex && accent.word === tokenIndex;
+                  const isAccent =
+                    accent !== null && accent.line === lineIndex && accent.word === tokenIndex;
+                  const space = tokenIndex < tokens.length - 1 ? ' ' : '';
+                  // A word that has not arrived yet keeps its box: opacity 0,
+                  // never display: none, so the line never reflows.
+                  const hiddenWord = visibleWords !== undefined && index >= visibleWords;
+
+                  let content: ReactNode = `${token}${space}`;
+                  if (visibleChars !== undefined) {
+                    const chars = Array.from(token);
+                    const shown = Math.max(0, Math.min(chars.length, visibleChars - charCursor));
+                    charCursor += chars.length;
+                    content = (
+                      <>
+                        <span>{chars.slice(0, shown).join('')}</span>
+                        <span style={{ opacity: 0 }}>
+                          {chars.slice(shown).join('')}
+                          {space}
+                        </span>
+                      </>
+                    );
+                  }
 
                   return (
                     <span
                       key={`${lineIndex}-${tokenIndex}-${token}`}
                       style={{
                         color: isAccent ? colours[style.accentColour] : undefined,
-                        ...(style.animation === 'word_stagger'
-                          ? {
-                              display: 'inline-block',
-                              opacity: word.opacity,
-                              transform: `translateY(${word.offsetY}px)`,
-                            }
-                          : {}),
+                        ...(hiddenWord ? { opacity: 0 } : {}),
                       }}
                     >
-                      {token}
-                      {tokenIndex < tokens.length - 1 ? ' ' : ''}
+                      {content}
                     </span>
                   );
                 });
 
-                return <div key={`${lineIndex}-${line}`}>{rendered}</div>;
+                return <div key={`line-${lineIndex}`}>{rendered}</div>;
               })}
             </div>
           </div>

@@ -7,6 +7,9 @@
  */
 
 import type {
+  AgentEventDto,
+  AgentRunRequest,
+  AgentRunResponse,
   CaptionMode,
   Channel,
   ChatApplyRequest,
@@ -19,7 +22,16 @@ import type {
   JobProgressEvent,
   KeyStatus,
   OpenPathResult,
+  MusicGenerationDto,
+  ReferenceProfileDto,
+  RefinePreviewDto,
+  RemixPreset,
+  RemixStoryboardDto,
+  RenderInspectionDto,
   SettingsSnapshot,
+  ShotRow,
+  TaggingEstimateDto,
+  TaggingRunDto,
   Theme,
   VariantSummary,
   VoiceMode,
@@ -33,7 +45,7 @@ import {
   VOICE_CATALOG,
   isVoiceId,
 } from '../../../services/voice/src/voices';
-import { listings as demoListings, variants as demoVariants } from './demo';
+import { candidates as demoCandidates, listings as demoListings, variants as demoVariants } from './demo';
 import type { Listing, Variant } from './types';
 
 /** The shape `preload.ts` exposes. No `ipcRenderer` is reachable from here. */
@@ -43,6 +55,7 @@ interface ZeniconicBridge {
     ...args: Parameters<IpcContract[C]>
   ): Promise<Awaited<ReturnType<IpcContract[C]>>>;
   onJobProgress(listener: (event: JobProgressEvent) => void): () => void;
+  onAgentEvent(listener: (event: AgentEventDto) => void): () => void;
 }
 
 interface GlobalScope {
@@ -268,6 +281,11 @@ const VARIANT_META: Record<
     hook: 'From the door to the view.',
   },
   social: { name: 'Social', tone: 'social', hook: 'Just listed.' },
+  marketing: {
+    name: 'Marketing 38',
+    tone: 'social',
+    hook: 'Hook, light, ritual, craft, space, lift, price, close.',
+  },
 };
 
 /** Maps a persisted variant onto the view model the review screen uses. */
@@ -358,6 +376,39 @@ export interface ZeniconicApi {
     chooseFolder(): Promise<string | null>;
     start(input: { listingId: string; folder: string }): Promise<{ jobId: string }>;
   };
+  dialog: {
+    chooseReference(): Promise<string | null>;
+    chooseRemix(): Promise<string | null>;
+  };
+  reference: {
+    analyze(input: { listingId: string; path: string }): Promise<ReferenceProfileDto>;
+    get(listingId: string): Promise<ReferenceProfileDto | null>;
+    clear(listingId: string): Promise<void>;
+  };
+  remix: {
+    analyze(input: { listingId: string; file: string; transcribe?: boolean }): Promise<RemixStoryboardDto>;
+    get(listingId: string): Promise<RemixStoryboardDto | null>;
+    create(input: { listingId: string; preset: RemixPreset }): Promise<VariantSummary>;
+    reorder(input: {
+      listingId: string;
+      preset: RemixPreset;
+      order: string[];
+    }): Promise<RemixStoryboardDto>;
+    retag(input: {
+      listingId: string;
+      shotId: string;
+      room: string;
+    }): Promise<RemixStoryboardDto>;
+  };
+  review: {
+    inspect(input: {
+      file: string;
+      facts?: Record<string, string | number | undefined>;
+    }): Promise<RenderInspectionDto>;
+  };
+  music: {
+    generate(prompt: string): Promise<MusicGenerationDto>;
+  };
   variants: {
     list(listingId: string): Promise<VariantSummary[]>;
     approve(input: {
@@ -370,6 +421,9 @@ export interface ZeniconicApi {
       variantId: string;
     }): Promise<{ stillPath: string }>;
   };
+  shots: {
+    list(listingId: string): Promise<ShotRow[]>;
+  };
   jobs: {
     list(): Promise<JobRecord[]>;
   };
@@ -377,6 +431,13 @@ export interface ZeniconicApi {
     send(input: ChatSendRequest): Promise<ChatResult>;
     apply(input: ChatApplyRequest): Promise<ChatApplyResult>;
     versions(listingId: string, variantId: string): Promise<ChatVersion[]>;
+  };
+  agent: {
+    run(input: AgentRunRequest): Promise<AgentRunResponse>;
+    approve(input: { runId: string; approved: boolean }): Promise<{ ok: boolean }>;
+  };
+  refine: {
+    preview(input: { listingId: string; variantId: string }): Promise<RefinePreviewDto>;
   };
   export: {
     start(input: {
@@ -392,6 +453,11 @@ export interface ZeniconicApi {
     setTheme(theme: Theme): Promise<void>;
     setKey(key: string): Promise<void>;
     keyStatus(): Promise<KeyStatus>;
+    setTagging(enabled: boolean): Promise<void>;
+  };
+  tagging: {
+    estimate(listingId: string): Promise<TaggingEstimateDto>;
+    start(listingId: string): Promise<TaggingRunDto>;
   };
   shell: {
     openPath(path: string): Promise<OpenPathResult>;
@@ -406,6 +472,7 @@ export interface ZeniconicApi {
     setVoice(voiceId: string): Promise<void>;
   };
   onJobProgress(listener: (event: JobProgressEvent) => void): () => void;
+  onAgentEvent(listener: (event: AgentEventDto) => void): () => void;
 }
 
 export const api: ZeniconicApi = {
@@ -454,9 +521,89 @@ export const api: ZeniconicApi = {
     },
   },
 
-  variants: {
-    async list(listingId) {
+  dialog: {
+    async chooseReference() {
       const desktop = bridge();
+      if (desktop) return desktop.invoke('dialog:chooseReference');
+      return null;
+    },
+
+    async chooseRemix() {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('dialog:chooseRemix');
+      return null;
+    },
+  },
+
+  reference: {
+    async analyze(input) {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('reference:analyze', input);
+      throw new Error('Reference analysis needs the desktop app.');
+    },
+
+    async get(listingId) {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('reference:get', listingId);
+      return null;
+    },
+
+    async clear(listingId) {
+      const desktop = bridge();
+      if (desktop) await desktop.invoke('reference:clear', listingId);
+    },
+  },
+
+  remix: {
+    async analyze(input) {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('remix:analyze', input);
+      throw new Error('Remix analysis needs the desktop app.');
+    },
+
+    async get(listingId) {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('remix:get', listingId);
+      return null;
+    },
+
+    async create(input) {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('remix:create', input);
+      throw new Error('Remix creation needs the desktop app.');
+    },
+
+    async reorder(input) {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('remix:reorder', input);
+      throw new Error('Reordering a remix needs the desktop app.');
+    },
+
+    async retag(input) {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('remix:retag', input);
+      throw new Error('Tagging remix scenes needs the desktop app.');
+    },
+  },
+
+  review: {
+    async inspect(input) {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('review:inspect', input);
+      throw new Error('Render inspection needs the desktop app.');
+    },
+  },
+
+  music: {
+    async generate(prompt) {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('music:generate', prompt);
+      throw new Error('Music generation needs the desktop app.');
+    },
+  },
+
+  variants: {
+    async list(listingId) {      const desktop = bridge();
       if (desktop) return desktop.invoke('variants:list', listingId);
       return demoVariantsFor(listingId).map((variant) => ({ ...variant }));
     },
@@ -490,6 +637,28 @@ export const api: ZeniconicApi = {
     },
   },
 
+  shots: {
+    async list(listingId) {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('shots:list', listingId);
+      // Browser preview only: the same demo pool the other screens show.
+      return demoCandidates.map((candidate, index) => {
+        const startSec = Math.round(index * 3.2 * 10) / 10;
+        return {
+          shotId: candidate.id,
+          sourceId: `s_${candidate.id}`,
+          room: candidate.room,
+          startSec,
+          endSec: Math.round((startSec + candidate.durationSec) * 10) / 10,
+          durationSec: candidate.durationSec,
+          score: Math.round(candidate.score) / 100,
+          reason: candidate.reason,
+          ...(candidate.rejected === undefined ? {} : { defects: [candidate.rejected] }),
+        };
+      });
+    },
+  },
+
   chat: {
     async send(input) {
       const desktop = bridge();
@@ -507,6 +676,38 @@ export const api: ZeniconicApi = {
       const desktop = bridge();
       if (desktop) return desktop.invoke('chat:versions', listingId, variantId);
       return demoChatFor(listingId, variantId).versions.map((version) => ({ ...version }));
+    },
+  },
+
+  agent: {
+    async run(input) {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('agent:run', input);
+      // Browser preview: no model, no commit. Same shape as the desktop reply.
+      return {
+        ok: false,
+        reply:
+          'The agent needs the desktop app and an OpenRouter key. In the browser preview this button only explains the flow.',
+        warnings: ['Browser preview: no model call was made.'],
+        edits: [],
+        costUsd: 0,
+        steps: 0,
+        error: 'desktop-only',
+      };
+    },
+
+    async approve(input) {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('agent:approve', input);
+      return { ok: false };
+    },
+  },
+
+  refine: {
+    async preview(input) {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('refine:preview', input);
+      throw new Error('Draft previews need the desktop app.');
     },
   },
 
@@ -543,6 +744,7 @@ export const api: ZeniconicApi = {
         voiceId: demoVoiceId,
         version: DEMO_VERSION,
         spendUsd: DEMO_SPEND_USD,
+        tagOnAnalyse: false,
       };
     },
 
@@ -567,6 +769,29 @@ export const api: ZeniconicApi = {
       const desktop = bridge();
       if (desktop) return desktop.invoke('settings:keyStatus');
       return { configured: demoKeyConfigured };
+    },
+
+    async setTagging(enabled) {
+      const desktop = bridge();
+      if (desktop) {
+        await desktop.invoke('settings:setTagging', enabled);
+        return;
+      }
+      throw new Error('Tagging settings need the desktop app.');
+    },
+  },
+
+  tagging: {
+    async estimate(listingId) {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('tagging:estimate', listingId);
+      return { shots: 0, usd: 0, model: 'desktop only', capUsd: 0.25, tagged: 0 };
+    },
+
+    async start(listingId) {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('tagging:start', listingId);
+      throw new Error('Vision tagging needs the desktop app.');
     },
   },
 
@@ -622,6 +847,12 @@ export const api: ZeniconicApi = {
     const desktop = bridge();
     if (!desktop) return () => undefined;
     return desktop.onJobProgress(listener);
+  },
+
+  onAgentEvent(listener) {
+    const desktop = bridge();
+    if (!desktop) return () => undefined;
+    return desktop.onAgentEvent(listener);
   },
 };
 

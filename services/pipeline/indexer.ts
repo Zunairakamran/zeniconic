@@ -43,6 +43,32 @@ export interface IndexedClip {
   shots: IndexedShot[];
 }
 
+/** One source file as it was when the index was built. */
+export interface IndexSourceFile {
+  /** File name inside the folder (not a path). */
+  name: string;
+  sizeBytes: number;
+  /** Whole milliseconds: a float mtime is not stable across filesystems. */
+  mtimeMs: number;
+}
+
+/**
+ * Proof that an index describes one specific folder state.
+ *
+ * The folder path plus a snapshot of every video's size and modification time
+ * is cheap to take (no decoding) and enough to answer one question honestly:
+ * "is this index still the index of this folder?" Without a signature an index
+ * can be persisted but never reused for a *different* run.
+ */
+export interface IndexSourceSignature {
+  /** Absolute folder path, forward slashes, as the indexer sees it. */
+  folder: string;
+  /** SHA-256 over `{ folder, files }`; equal fingerprints mean equal snapshots. */
+  fingerprint: string;
+  /** Sorted by name; the snapshot the fingerprint covers. */
+  files: IndexSourceFile[];
+}
+
 export interface FootageIndex {
   version: 1;
   generatedAt: string;
@@ -53,6 +79,11 @@ export interface FootageIndex {
     landscape: { width: number; height: number };
   };
   clips: IndexedClip[];
+  /**
+   * Present on an index written by the desktop pipeline. A hand-written or
+   * legacy index without one is still readable; it just can never be reused.
+   */
+  sourceSignature?: IndexSourceSignature;
 }
 
 export interface IndexOptions {

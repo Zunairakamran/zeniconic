@@ -324,6 +324,7 @@ export async function buildVoiceTrack(input: VoiceTrackInput): Promise<VoiceTrac
   let spokenVoice: string;
   let cacheTag: VoiceCacheTag;
   let warnings: string[] = [];
+  let provider: 'studio' | 'local' = 'local';
 
   if (input.tts !== undefined) {
     engine = input.tts;
@@ -343,6 +344,7 @@ export async function buildVoiceTrack(input: VoiceTrackInput): Promise<VoiceTrac
     engine = selection.engine;
     spokenVoice = selection.voice;
     cacheTag = { provider: selection.provider, model: selection.model };
+    provider = selection.provider;
     warnings = [...selection.warnings];
   }
 
@@ -352,13 +354,46 @@ export async function buildVoiceTrack(input: VoiceTrackInput): Promise<VoiceTrac
   mkdirSync(outDir, { recursive: true });
 
   const lines = new Map<string, TtsLine>();
-  for (const cue of cues) {
-    if (lines.has(cue.text)) continue;
-    if (presenterWindowForCue(cue, windows)) continue;
-    lines.set(
-      cue.text,
-      await synthesiseLine(cue.text, spokenVoice, engine, cacheDir, cacheTag),
+  const speak = async (
+    activeEngine: TtsEngine,
+    activeVoice: string,
+    activeTag: VoiceCacheTag,
+  ): Promise<void> => {
+    lines.clear();
+    for (const cue of cues) {
+      if (lines.has(cue.text)) continue;
+      if (presenterWindowForCue(cue, windows)) continue;
+      lines.set(
+        cue.text,
+        await synthesiseLine(cue.text, activeVoice, activeEngine, cacheDir, activeTag),
+      );
+    }
+  };
+
+  try {
+    await speak(engine, spokenVoice, cacheTag);
+  } catch (error) {
+    // Kokoro is the backup voice. A studio failure (missing model, rejected
+    // key, timeout) must not silence the film while an offline engine is
+    // available; the export still reports what happened.
+    if (input.tts !== undefined || input.provider === 'local') throw error;
+
+    const reason = error instanceof Error ? error.message : String(error);
+    warnings.push(
+      `The studio voice failed (${reason}); using the offline Kokoro voice for this export.`,
     );
+    const local = await selectVoiceEngine({
+      provider: 'local',
+      cacheDir,
+      ...(voice === undefined ? {} : { voiceId: voice }),
+      ...(input.modelDir === undefined ? {} : { modelDir: input.modelDir }),
+    });
+    engine = local.engine;
+    spokenVoice = local.voice;
+    cacheTag = { provider: local.provider, model: local.model };
+    provider = 'local';
+    warnings.push(...local.warnings);
+    await speak(engine, spokenVoice, cacheTag);
   }
 
   const plan = buildVoicePlan({ cues, windows, lines, totalSec });
@@ -376,5 +411,6 @@ export async function buildVoiceTrack(input: VoiceTrackInput): Promise<VoiceTrac
   const captionsPath = join(outDir, 'captions.json');
   writeFileSync(captionsPath, `${JSON.stringify(plan.captions, null, 2)}\n`);
 
-  return { audioPath, captions: plan.captions, durationSec: totalSec, warnings };
+  const characters = [...lines.keys()].reduce((sum, text) => sum + text.length, 0);
+  return { audioPath, captions: plan.captions, durationSec: totalSec, provider, characters, warnings };
 }

@@ -81,6 +81,85 @@ function uniquePaths(paths: readonly string[]): string[] {
   return result;
 }
 
+/**
+ * Video encoder args shared by the timeline pass and the per-segment cache.
+ * `draft` is the half-size ladder; `standard` and `high` share the delivery
+ * ladder (profile bitrate with a peak ceiling), per FR-42.
+ */
+export function videoEncodeArgs(profile: RenderProfile, quality: Quality): string[] {
+  if (quality === 'draft') {
+    return [
+      '-c:v',
+      'libx264',
+      '-preset',
+      'veryfast',
+      '-crf',
+      '28',
+      '-pix_fmt',
+      'yuv420p',
+    ];
+  }
+  return [
+    '-c:v',
+    'libx264',
+    '-preset',
+    'slow',
+    '-profile:v',
+    'high',
+    '-pix_fmt',
+    'yuv420p',
+    '-b:v',
+    profile.videoBitrate,
+    '-maxrate',
+    profile.maxBitrate,
+    '-bufsize',
+    doubleBitrate(profile.maxBitrate),
+  ];
+}
+
+/** Keyframe every 2 s: trimmers and thumbnail pickers expect it. */
+export function gopArgs(profile: RenderProfile): string[] {
+  const gop = String(Math.round(profile.fps * 2));
+  return ['-g', gop, '-keyint_min', gop, '-sc_threshold', '0'];
+}
+
+/**
+ * One normalised clip segment: the clip's own filter chain (trim, speed,
+ * framing, effects, grade, fps) encoded with the same ladder as the timeline
+ * pass, so a concat of segments stays compatible with a single-pass render.
+ */
+export function buildSegmentArgs(input: {
+  source: string;
+  graph: string;
+  durationSec: number;
+  output: string;
+  profile: RenderProfile;
+  quality: Quality;
+}): string[] {
+  const target = renderProfileFor(input.profile, input.quality);
+  return [
+    '-y',
+    '-v',
+    'error',
+    '-i',
+    input.source,
+    '-filter_complex',
+    input.graph,
+    '-map',
+    '[outv]',
+    '-an',
+    ...videoEncodeArgs(input.profile, input.quality),
+    '-r',
+    String(target.fps),
+    ...gopArgs(target),
+    '-t',
+    input.durationSec.toFixed(3),
+    '-movflags',
+    '+faststart',
+    input.output,
+  ];
+}
+
 export function buildRenderArgs(
   edl: Edl,
   profile: RenderProfile,
@@ -124,44 +203,14 @@ export function buildRenderArgs(
     args.push('-an');
   }
 
-  if (isDraft) {
-    args.push(
-      '-c:v',
-      'libx264',
-      '-preset',
-      'veryfast',
-      '-crf',
-      '28',
-      '-pix_fmt',
-      'yuv420p',
-    );
-  } else {
-    // `standard` and `high` share the delivery ladder: profile bitrate with a
-    // peak ceiling. Only the draft ladder differs, per FR-42.
-    args.push(
-      '-c:v',
-      'libx264',
-      '-preset',
-      'slow',
-      '-profile:v',
-      'high',
-      '-pix_fmt',
-      'yuv420p',
-      '-b:v',
-      profile.videoBitrate,
-      '-maxrate',
-      profile.maxBitrate,
-      '-bufsize',
-      doubleBitrate(profile.maxBitrate),
-    );
-  }
+  // `standard` and `high` share the delivery ladder; only `draft` differs.
+  args.push(...videoEncodeArgs(profile, quality));
 
   args.push('-r', String(target.fps));
 
   // Keyframe every 2 s: trimmers and thumbnail pickers expect it. The default
   // scatters keyframes on every cut instead.
-  const gop = String(Math.round(target.fps * 2));
-  args.push('-g', gop, '-keyint_min', gop, '-sc_threshold', '0');
+  args.push(...gopArgs(target));
 
   args.push(
     '-c:a',

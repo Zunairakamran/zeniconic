@@ -56,6 +56,11 @@ export interface PlanRequest {
   canvas: { width: number; height: number; fps: number; safeArea: SafeArea };
   candidates: Candidate[];
   facts: Facts;
+  /** Optional measured reference style; guidance, never a hard template. */
+  referenceStyle?: {
+    averageShotSec?: number;
+    pacing?: 'slow' | 'medium' | 'fast';
+  };
   music: {
     trackId: string;
     src: string;

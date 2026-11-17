@@ -9,7 +9,7 @@ import { api, toUiListing, toUiVariant, type Facts } from './api';
 import { candidates, listings as demoListings, variants as demoVariants } from './demo';
 import { applyTheme, getStoredTheme, type Theme } from './theme';
 import { Icon } from './ui';
-import type { Listing, ScreenProps, Variant, View } from './types';
+import type { Candidate, Listing, ScreenProps, Variant, View } from './types';
 import { HomeScreen } from './screens/Home';
 import { IntakeScreen } from './screens/Intake';
 import { AnalysisScreen } from './screens/Analysis';
@@ -18,6 +18,7 @@ import { VariantsScreen } from './screens/Variants';
 import { RefineChatScreen } from './screens/RefineChat';
 import { FormatsScreen } from './screens/Formats';
 import { ExportScreen } from './screens/Export';
+import { RemixScreen } from './screens/Remix';
 import { SettingsScreen } from './screens/Settings';
 
 const screens: Record<View, ComponentType<ScreenProps>> = {
@@ -29,15 +30,17 @@ const screens: Record<View, ComponentType<ScreenProps>> = {
   chat: RefineChatScreen,
   formats: FormatsScreen,
   export: ExportScreen,
+  remix: RemixScreen,
   settings: SettingsScreen,
 };
 
 const nav: Array<{ id: View; label: string; icon: 'list' | 'settings' }> = [
   { id: 'home', label: 'Listings', icon: 'list' },
+  { id: 'remix', label: 'Remix', icon: 'list' },
   { id: 'settings', label: 'Settings', icon: 'settings' },
 ];
 
-const views: View[] = ['home', 'intake', 'analysis', 'shots', 'variants', 'chat', 'formats', 'export', 'settings'];
+const views: View[] = ['home', 'intake', 'analysis', 'shots', 'variants', 'chat', 'formats', 'export', 'remix', 'settings'];
 
 function initialView(): View {
   const hash = window.location.hash.replace('#', '');
@@ -48,6 +51,28 @@ function messageOf(error: unknown): string {
   return error instanceof Error ? error.message : String(error);
 }
 
+function candidateFromShot(row: {
+  shotId: string;
+  room: string;
+  startSec: number;
+  endSec: number;
+  score?: number;
+  sellingPoints?: string[];
+  defects?: string[];
+}): Candidate {
+  const durationSec = Math.max(0.4, Math.round((row.endSec - row.startSec) * 10) / 10);
+  const points = row.sellingPoints ?? [];
+  const defects = row.defects ?? [];
+  return {
+    id: row.shotId,
+    room: row.room,
+    score: typeof row.score === 'number' ? Math.round(row.score * 100) : 0,
+    durationSec,
+    reason: points.length > 0 ? points.join(' · ') : `${row.room} shot, ${durationSec}s`,
+    ...(defects.length > 0 ? { rejected: defects.join(', ') } : {}),
+  };
+}
+
 export function App() {
   const [view, setView] = useState<View>(initialView());
   const [theme, setTheme] = useState<Theme>(getStoredTheme());
@@ -56,6 +81,7 @@ export function App() {
   const [listings, setListings] = useState<Listing[]>(demoListings);
   const [selectedId, setSelectedId] = useState(demoListings[0]!.id);
   const [variantList, setVariantList] = useState<Variant[]>(demoVariants);
+  const [shotCandidates, setShotCandidates] = useState<Candidate[]>(candidates);
   const [progress, setProgress] = useState<JobProgressEvent | undefined>();
   const [analysisJobId, setAnalysisJobId] = useState<string | undefined>();
   const [analysisListingId, setAnalysisListingId] = useState<string | undefined>();
@@ -110,8 +136,7 @@ export function App() {
     };
   }, []);
 
-  const loadVariants = async (listingId: string): Promise<Variant[]> => {
-    const records = await api.variants.list(listingId);
+  const loadVariants = async (listingId: string): Promise<Variant[]> => {    const records = await api.variants.list(listingId);
     const mapped = records.map(toUiVariant);
     setVariantList(mapped);
     setListings((current) =>
@@ -127,6 +152,12 @@ export function App() {
     );
     return mapped;
   };
+
+  // Re-read variants when returning to the review screen (e.g. after a remix).
+  useEffect(() => {
+    if (view !== 'variants') return;
+    void loadVariants(selectedId).catch(() => undefined);
+  }, [view, selectedId]);
 
   // Keep the review screen in step with the selected listing.
   useEffect(() => {
@@ -149,6 +180,14 @@ export function App() {
               : listing,
           ),
         );
+      })
+      .catch(() => undefined);
+
+    api.shots
+      .list(selectedId)
+      .then((rows) => {
+        if (cancelled || rows.length === 0) return;
+        setShotCandidates(rows.map(candidateFromShot));
       })
       .catch(() => undefined);
 
@@ -346,11 +385,16 @@ export function App() {
     navigate('variants');
   };
 
+  const refreshShots = async (): Promise<void> => {
+    const rows = await api.shots.list(selectedId);
+    if (rows.length > 0) setShotCandidates(rows.map(candidateFromShot));
+  };
+
   const props: ScreenProps = {
     listing,
     listings,
     variants: variantList,
-    candidates,
+    candidates: shotCandidates,
     onNavigate: navigate,
     onSelectListing: selectListing,
     progress,
@@ -374,6 +418,8 @@ export function App() {
     onChatSend: (input) => api.chat.send(input),
     onChatApply: (input) => api.chat.apply(input),
     onChatVersions: (listingId, variantId) => api.chat.versions(listingId, variantId),
+    onRefreshShots: refreshShots,
+    onAgentRun: (input) => api.agent.run(input),
   };
 
   return (

@@ -80,6 +80,88 @@ describe('tagShot — happy path', () => {
   });
 });
 
+describe('tagShot — reported cost', () => {
+  /** Collects every `onCost` figure in call order. */
+  function collector(): { costs: number[]; onCost: (usd: number) => void } {
+    const costs: number[] = [];
+    return { costs, onCost: (usd) => costs.push(usd) };
+  }
+
+  it('reports the cost the client returned, once per call', async () => {
+    const { client } = mockClient([{ json: validTags(), costUsd: 0.000196 }]);
+    const { costs, onCost } = collector();
+
+    await tagShot(
+      { sheetPath: SHEET_PATH, durationSec: DURATION },
+      { client, model: MODEL, promptVersion: PROMPT_VERSION, onCost },
+    );
+
+    expect(costs).toEqual([0.000196]);
+  });
+
+  it('reports both the rejected reply and the repair, because both were billed', async () => {
+    const broken = { ...validTags(), room: 'garage' };
+    const { client } = mockClient([
+      { json: broken, costUsd: 0.0002 },
+      { json: validTags(), costUsd: 0.0003 },
+    ]);
+    const { costs, onCost } = collector();
+
+    await tagShot(
+      { sheetPath: SHEET_PATH, durationSec: DURATION },
+      { client, model: MODEL, promptVersion: PROMPT_VERSION, onCost },
+    );
+
+    expect(costs).toEqual([0.0002, 0.0003]);
+  });
+
+  it('reports nothing for a call that never returned a response', async () => {
+    const authError = Object.assign(new Error('invalid key'), { code: 'E_AUTH' });
+    const { client } = mockClient([{ throws: authError }]);
+    const { costs, onCost } = collector();
+
+    await expect(
+      tagShot(
+        { sheetPath: SHEET_PATH, durationSec: DURATION },
+        { client, model: MODEL, promptVersion: PROMPT_VERSION, onCost },
+      ),
+    ).rejects.toBe(authError);
+
+    expect(costs).toEqual([]);
+  });
+
+  it('reports nothing for a cache hit', async () => {
+    const cache = new MemoryTaggingCache();
+    const { client } = mockClient([{ json: validTags() }]);
+    const { costs, onCost } = collector();
+    const opts = { client, model: MODEL, promptVersion: PROMPT_VERSION, cache, onCost };
+
+    await tagShot({ sheetPath: SHEET_PATH, durationSec: DURATION }, opts);
+    await tagShot({ sheetPath: SHEET_PATH, durationSec: DURATION }, opts);
+
+    expect(costs).toHaveLength(1);
+  });
+
+  it('reports a zero cost and skips a client that reports none', async () => {
+    const free = mockClient([{ json: validTags(), costUsd: 0 }]);
+    const freeCosts = collector();
+    await tagShot(
+      { sheetPath: SHEET_PATH, durationSec: DURATION },
+      { client: free.client, model: MODEL, promptVersion: PROMPT_VERSION, onCost: freeCosts.onCost },
+    );
+
+    const silent = mockClient([{ json: validTags(), omitCost: true }]);
+    const silentCosts = collector();
+    await tagShot(
+      { sheetPath: SHEET_PATH, durationSec: DURATION },
+      { client: silent.client, model: MODEL, promptVersion: PROMPT_VERSION, onCost: silentCosts.onCost },
+    );
+
+    expect(freeCosts.costs).toEqual([0]);
+    expect(silentCosts.costs).toEqual([]);
+  });
+});
+
 describe('tagShot — cache', () => {
   it('serves a cache hit without calling the client', async () => {
     const cache = new MemoryTaggingCache();

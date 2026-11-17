@@ -23,6 +23,16 @@
     "icon": "node packaging/make-icon.mjs",
     "dist": "npm run build && electron-builder --win nsis --x64 --publish never",
     "dist:dir": "npm run build && electron-builder --win --x64 --dir --publish never",
+    "fixtures": "node scripts/make-media-fixtures.mjs && node scripts/make-music-fixtures.mjs",
+    "agent:smoke": "tsx scripts/agent-smoke.ts",
+    "tag:smoke": "tsx scripts/tag-smoke.ts",
+    "tag:pipeline:smoke": "tsx scripts/tag-pipeline-smoke.ts",
+    "ramp:smoke": "tsx scripts/ramp-smoke.ts",
+    "reference:smoke": "tsx scripts/reference-smoke.ts",
+    "remix:smoke": "tsx scripts/remix-smoke.ts",
+    "remix:transcribe:smoke": "tsx scripts/remix-transcribe-smoke.ts",
+    "tts:smoke": "tsx scripts/tts-smoke.ts",
+    "review:smoke": "tsx scripts/review-smoke.ts",
     "postinstall": "electron-builder install-app-deps"
   },
   "devDependencies": {

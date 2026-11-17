@@ -15,10 +15,21 @@ export interface ModelPrice {
  * a guess. Keep this table in lockstep with the JSON.
  */
 export const MODEL_PRICES: Record<string, ModelPrice> = {
-  'google/gemini-3.8-flash': { input: 0.825, output: 4.125 },
+  'google/gemini-3.8-flash': { input: 0.75, output: 3.75 },
   'openai/gpt-6-astra': { input: 10, output: 50 },
   'google/gemini-4-carbon': { input: 2, output: 10 },
+  'google/gemini-4-hydrogen': { input: 1.5, output: 7.5 },
+  'google/gemini-3.5-flash-lite': { input: 0.3, output: 2.5 },
+  'perceptron/perceptron-mk1.5': { input: 0.15, output: 1.5 },
+  'perceptron/perceptron-mk1': { input: 0.15, output: 1.5 },
+  'deepseek/deepseek-v4.1-flash': { input: 0.14, output: 0.42 },
+  'deepseek/deepseek-v4.1-flash-1017': { input: 0.036, output: 0.5 },
+  'anthropic/claude-haiku-5.5': { input: 0.1, output: 0.5 },
+  'openai/gpt-5-nano': { input: 0.05, output: 0.4 },
   'openai/gpt-audio': { input: 2.5, output: 2.5 },
+  'google/gemini-3.8-flash-tts': { input: 2.5, output: 2.5 },
+  'google/gemini-3.8-flash-lite-tts': { input: 1, output: 1 },
+  'elevenlabs/eleven-v4': { input: 0, output: 0 },
 };
 
 const TOKENS_PER_MILLION = 1_000_000;
@@ -34,7 +45,7 @@ export function roundCostUsd(value: number, decimals = 8): number {
 }
 
 /** `google/gemini-3.8-flash:floor` is priced as `google/gemini-3.8-flash`. */
-function baseModelId(model: string): string {
+export function baseModelId(model: string): string {
   const separator = model.lastIndexOf(':');
   if (separator <= 0) return model;
   const suffix = model.slice(separator + 1);

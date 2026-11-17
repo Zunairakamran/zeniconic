@@ -144,8 +144,36 @@ describe('transcribeAudio', () => {
     expect(slept).toBe(1);
   });
 
-  it('retries a 500 once and reports E_SERVER if it fails again', async () => {
-    const fake = fakeFetch([reply(503, 'busy'), reply(502, 'still busy')]);
+  it('reads the provider-reported cost and usage from the reply', async () => {
+    const fake = fakeFetch([
+      reply(200, {
+        ...GOOD_REPLY,
+        usage: { type: 'duration', seconds: 3.2, cost: 0.0042 },
+      }),
+    ]);
+
+    const result = await transcribeAudio(AUDIO, {
+      getApiKey: () => KEY,
+      fetchImpl: fake.fetchImpl,
+    });
+
+    expect(result.costUsd).toBeCloseTo(0.0042, 6);
+    expect(result.usageSeconds).toBe(3.2);
+  });
+
+  it('leaves cost absent when the reply carries no usage', async () => {
+    const fake = fakeFetch([reply(200, GOOD_REPLY)]);
+
+    const result = await transcribeAudio(AUDIO, {
+      getApiKey: () => KEY,
+      fetchImpl: fake.fetchImpl,
+    });
+
+    expect(result.costUsd).toBeUndefined();
+    expect(result.usageSeconds).toBeUndefined();
+  });
+
+  it('retries a 500 once and reports E_SERVER if it fails again', async () => {    const fake = fakeFetch([reply(503, 'busy'), reply(502, 'still busy')]);
     const sleep = () => Promise.resolve();
 
     await expect(

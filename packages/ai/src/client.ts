@@ -6,7 +6,15 @@ import { buildWireMessages } from './messages';
 import { codeForStatus, excerpt, isRetryableStatus, redactSecrets, retryDelayMs } from './retry';
 import { AiError } from './types';
 import type { BudgetLedger } from './budget';
-import type { ChatClient, ChatContentPart, ChatRequest, ChatResponse, ClientOptions, FetchLike } from './types';
+import type {
+  ChatClient,
+  ChatContentPart,
+  ChatRequest,
+  ChatResponse,
+  ClientOptions,
+  FetchLike,
+  ToolDefinition,
+} from './types';
 
 const DEFAULT_BASE_URL = 'https://openrouter.ai/api/v1';
 const DEFAULT_TEMPERATURE = 0.2;
@@ -44,6 +52,14 @@ function contentChars(content: string | ChatContentPart[]): number {
     (total, part) => total + (part.type === 'text' ? part.text.length : part.image_url.url.length),
     0,
   );
+}
+
+/**
+ * Tools travel natively in `tools`; an empty array is treated as absent so a
+ * caller spreading an empty registry cannot provoke a provider 400.
+ */
+function wireTools(req: ChatRequest): ToolDefinition[] | undefined {
+  return req.tools !== undefined && req.tools.length > 0 ? req.tools : undefined;
 }
 
 export class OpenRouterClient implements ChatClient {
@@ -93,6 +109,8 @@ export class OpenRouterClient implements ChatClient {
         cachedTokens: envelope.cachedTokens,
         cacheDiscountUsd: envelope.cacheDiscountUsd,
         ...(json === undefined ? {} : { json }),
+        ...(envelope.toolCalls.length === 0 ? {} : { toolCalls: envelope.toolCalls }),
+        ...(envelope.finishReason === undefined ? {} : { finishReason: envelope.finishReason }),
       };
     } catch (error) {
       // A failed or already-committed call releases the reservation; spend stays.
@@ -103,12 +121,19 @@ export class OpenRouterClient implements ChatClient {
 
   /** Conservative: prompt chars / 4, plus the full completion allowance. */
   private estimateRequestUsd(req: ChatRequest): number {
-    const promptTokens = req.messages.reduce(
+    const toolTokens = (wireTools(req) ?? []).reduce(
+      (total, tool) => total + Math.ceil(JSON.stringify(tool).length / CHARS_PER_TOKEN) + TOKENS_PER_MESSAGE,
+      0,
+    );
+    const messageTokens = req.messages.reduce(
       (total, message) => total + Math.ceil(contentChars(message.content) / CHARS_PER_TOKEN) + TOKENS_PER_MESSAGE,
       0,
     );
     const completionTokens = req.maxTokens ?? DEFAULT_MAX_TOKENS_ESTIMATE;
-    return estimateCostUsd(req.model, { promptTokens, completionTokens });
+    return estimateCostUsd(req.model, {
+      promptTokens: messageTokens + toolTokens,
+      completionTokens,
+    });
   }
 
   private requestBody(req: ChatRequest): Record<string, unknown> {
@@ -125,6 +150,9 @@ export class OpenRouterClient implements ChatClient {
         json_schema: { name: 'reply', strict: true, schema: req.jsonSchema },
       };
     }
+    const tools = wireTools(req);
+    if (tools !== undefined) body.tools = tools;
+    if (req.toolChoice !== undefined) body.tool_choice = req.toolChoice;
     return body;
   }
 

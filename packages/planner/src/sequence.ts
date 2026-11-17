@@ -267,11 +267,20 @@ function buildOrder(slots: Slot[], spec: SequenceSpec, seed: number): Slot[] {
  * bookend to the last slot, and grows the list only if it cannot fill the
  * target otherwise.
  */
-function chooseSlots(order: Slot[], spec: SequenceSpec, look: LookId): Slot[] {
+function chooseSlots(
+  order: Slot[],
+  spec: SequenceSpec,
+  look: LookId,
+  averageShotSec?: number,
+): Slot[] {
   const hook = order[0];
   if (!hook) throw new RangeError('Cannot plan a sequence without a hook shot');
 
-  const average = LOOK_AVERAGE_SHOT_SEC[look] ?? 3;
+  const lookAverage = LOOK_AVERAGE_SHOT_SEC[look] ?? 3;
+  const average =
+    averageShotSec !== undefined && Number.isFinite(averageShotSec)
+      ? Math.min(spec.maxShotSec, Math.max(spec.minShotSec, averageShotSec))
+      : lookAverage;
   let count = Math.min(order.length, Math.max(1, Math.round(spec.targetDurationSec / average)));
   while (count > 1 && count * spec.minShotSec > spec.targetDurationSec + AIM_TOLERANCE_SEC) {
     count -= 1;
@@ -479,10 +488,11 @@ export function planSequence(
   look: LookId,
   beatGrid: readonly number[],
   seed = 0,
+  averageShotSec?: number,
 ): PlannedClip[] {
   const slots = usableSlots(candidates, spec);
   const order = buildOrder(slots, spec, seed);
-  const chosen = chooseSlots(order, spec, look);
+  const chosen = chooseSlots(order, spec, look, averageShotSec);
   const maxes = chosen.map((slot) => roundTime(Math.min(spec.maxShotSec, slot.maxSec)));
   const allocated = allocate(chosen, spec);
   const goal = roundTime(allocated.reduce((sum, value) => sum + value, 0));
