@@ -46,3 +46,11 @@ release/
 !build/
 !build/icon.ico
 !build/icon.png
+
+# Demo renders stay local; screenshots and the summary are committed.
+demo/cuts/*.mp4
+
+
+# User-provided raw footage stays local
+raw-clips/
+

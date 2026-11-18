@@ -4,8 +4,8 @@
 
 ```
 npm run typecheck                       clean
-npx vitest run                          1488 passed, 1 skipped (123 files)
-npx vitest run --config apps/render     75 passed, 1 skipped (8 files)
+npx vitest run                          1489 passed, 1 skipped (123 files)
+npx vitest run --config apps/render     76 passed (8 files)
 npm run build                           passes
 node scripts/e2e.mjs                    66/66, 12 screenshots (9 light, 3 dark)
 npx tsx scripts/resume-smoke.ts         PASS (plan + render kill points)

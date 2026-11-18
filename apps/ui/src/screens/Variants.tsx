@@ -14,6 +14,7 @@ function runtime(seconds: number): string {
 }
 
 function stillUrl(path: string): string {
+  if (path.startsWith('data:')) return `url("${path}")`;
   return `url("${encodeURI(`file:///${path.replace(/\\/g, '/')}`)}")`;
 }
 
@@ -64,6 +65,30 @@ export function VariantsScreen({
   const [highlight, setHighlight] = useState(0);
   const [stills, setStills] = useState<Record<string, string>>({});
   const [previewError, setPreviewError] = useState<string | undefined>();
+
+  // Load the real hook frame for every card once; the CSS scene is only the
+  // fallback while the still renders (or in the browser preview).
+  useEffect(() => {
+    let live = true;
+    if (variants.length === 0) return () => { live = false; };
+    void (async () => {
+      for (const variant of variants) {
+        if (stills[variant.id] !== undefined) continue;
+        try {
+          const path = await onPreviewVariant(variant.id);
+          if (live && path !== undefined) {
+            setStills((current) => ({ ...current, [variant.id]: path }));
+          }
+        } catch {
+          // Browser preview has no renderer; keep the CSS art.
+        }
+      }
+    })();
+    return () => {
+      live = false;
+    };
+    // Re-run only when the variant set or listing changes.
+  }, [listing.id, variants.map((variant) => variant.id).join('|')]);
 
   // The storyboard is the analysis shot order, not a variant's EDL: variants
   // store a plan, so showing one as "the" storyboard would invent an order.
@@ -152,7 +177,7 @@ export function VariantsScreen({
               <div className="variantscreen__posterwrap">
                 <div className="variantscreen__poster">
                   <span
-                    className="variantscreen__scene"
+                    className={`variantscreen__scene${stills[variant.id] === undefined ? '' : ' is-live'}`}
                     data-tone={variant.tone}
                     aria-hidden="true"
                     style={

@@ -76,24 +76,26 @@ export function HomeScreen({ listings, spendUsd, onNewListing, onSelectListing }
 
       <div className="home-grid">
         {listings.map((listing) => {
-          const sqft = listing.sqft > 0 ? `${listing.sqft.toLocaleString('en-GB')} sq ft` : '— sq ft';
+          const specs = [
+            listing.beds > 0 ? `${String(listing.beds)} bed` : undefined,
+            listing.baths > 0 ? `${String(listing.baths)} bath` : undefined,
+            listing.sqft > 0 ? `${listing.sqft.toLocaleString('en-GB')} sq ft` : undefined,
+          ].filter((value): value is string => value !== undefined);
           return (
             <article className="home-card" key={listing.id}>
               <button
                 type="button"
                 className="home-card__button"
                 onClick={() => onSelectListing(listing.id)}
-                aria-label={`Open ${listing.address}, ${listing.community}. ${listing.price}. ${listing.beds} bed, ${listing.baths} bath. ${statusLabel(listing)}.`}
+                aria-label={`Open ${listing.address}, ${listing.community}. ${listing.price}. ${specs.join(', ')}. ${statusLabel(listing)}.`}
               >
                 <span className={`home-thumb home-thumb--${listing.tone}`} aria-hidden="true" />
                 <span className="home-card__body">
                   <span className="home-address">{listing.address}</span>
                   <span className="home-community">{listing.community}</span>
                   <span className="home-price">{listing.price}</span>
-                  <span className="home-meta">
-                    {listing.beds} bed · {listing.baths} bath · {sqft}
-                  </span>
-                  <span className="home-status">
+                  <span className="home-meta">{specs.join(' · ')}</span>
+                <span className="home-status">
                     <StatusMark listing={listing} />
                     <span className="home-when">{listing.updatedAt}</span>
                   </span>

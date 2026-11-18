@@ -211,6 +211,10 @@ export class FakePipeline implements PipelinePort {
     return this.shots;
   }
 
+  async shotThumbnail(_listingId: string, _shotId: string): Promise<{ dataUrl: string }> {
+    return { dataUrl: 'data:image/jpeg;base64,/9j/2Q==' };
+  }
+
   async approveVariant(input: {
     listingId: string;
     variantId: string;

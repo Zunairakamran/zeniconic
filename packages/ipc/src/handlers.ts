@@ -10,7 +10,7 @@
  * rebuilt from known keys so unknown fields never reach the store.
  */
 
-import { readdir, stat } from 'node:fs/promises';
+import { readdir, readFile, stat } from 'node:fs/promises';
 import { basename, dirname, extname, resolve, sep } from 'node:path';
 import type { JobRecord } from '@zeniconic/jobs';
 import { isValidListingId } from '@zeniconic/store';
@@ -81,6 +81,8 @@ export interface PipelinePort {
   listVariants(listingId: string): Promise<VariantSummary[]>;
   /** Reads the persisted shot index; `[]` before analysis. */
   listShots(listingId: string): Promise<ShotRow[]>;
+  /** One cached JPEG preview of a shot as a data URL. */
+  shotThumbnail(listingId: string, shotId: string): Promise<{ dataUrl: string }>;
   /** Sets one variant's approval bit without touching its EDL. */
   approveVariant(input: {
     listingId: string;
@@ -1121,6 +1123,21 @@ export function createHandlers(deps: HandlerDeps): Handlers {
         }));
     },
 
+    'shots:thumbnail': async (input): Promise<{ dataUrl: string }> => {
+      const raw = requireObject(input, 'input');
+      const listingId = requireListingId(raw.listingId);
+      const shotId = requireShotId(raw.shotId);
+      await requireListing(store, listingId);
+      const result = await pipeline.shotThumbnail(listingId, shotId);
+      if (!isRecord(result) || typeof result.dataUrl !== 'string') {
+        throw new IpcError('E_PIPELINE', 'The shot preview could not be rendered.');
+      }
+      if (!/^data:image\/jpeg;base64,[A-Za-z0-9+/=]+$/.test(result.dataUrl)) {
+        throw new IpcError('E_PIPELINE', 'The shot preview was not a JPEG.');
+      }
+      return { dataUrl: result.dataUrl };
+    },
+
     'tagging:estimate': async (listingId): Promise<TaggingEstimateDto> => {
       const id = requireListingId(listingId);
       await requireListing(store, id);
@@ -1187,7 +1204,18 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       ) {
         throw new IpcError('E_PIPELINE', 'The renderer did not produce a preview frame.');
       }
-      return { stillPath: preview.stillPath };
+      // The packaged UI can read file://, but the dev server cannot. A data URL
+      // works in both and never exposes a filesystem path to the renderer.
+      let stillUrl: string | undefined;
+      try {
+        const bytes = await readFile(preview.stillPath);
+        if (bytes.length > 0 && bytes.length <= 2_000_000) {
+          stillUrl = `data:image/jpeg;base64,${bytes.toString('base64')}`;
+        }
+      } catch {
+        stillUrl = undefined;
+      }
+      return { stillPath: preview.stillPath, ...(stillUrl === undefined ? {} : { stillUrl }) };
     },
 
     'jobs:list': async (): Promise<JobRecord[]> => runner.list(),

@@ -5,8 +5,8 @@ partial, what is planned, and what is blocked.
 
 ## Evidence in one line
 
-- Root suite: **1488 passed, 1 skipped** (`npx vitest run`).
-- Renderer suite: **75 passed, 1 skipped** (`apps/render`).
+- Root suite: **1489 passed, 1 skipped** (`npx vitest run`).
+- Renderer suite: **76 passed** (`apps/render`).
 - E2E: **66/66** (`node scripts/e2e.mjs`), 12 screenshots.
 - Typecheck: clean.
 - Real agent run: 3 edits, 9.000 s FFmpeg render, **$0.006** of model spend
@@ -206,8 +206,8 @@ partial, what is planned, and what is blocked.
   Intake, Analysis and Settings all read real data; Settings models/spend/reset/
   music bank derive from `models.json` + catalogue. Browser demo data is gated
   to the no-Electron preview.
-- **Verification**: typecheck clean; root **1488 passed / 1 skipped** (123
-  files); render **75 passed / 1 skipped**; e2e **66/66**; build passes; resume
+- **Verification**: typecheck clean; root **1489 passed / 1 skipped** (123
+  files); render **76 passed**; e2e **66/66**; build passes; resume
   smoke PASS.
 
 ## Next priorities (in order)

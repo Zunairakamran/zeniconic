@@ -72,8 +72,11 @@ export function IntakeScreen({
   const [facts, setFacts] = useState<FactText>(() => ({
     price: listing.price,
     beds: String(listing.beds),
-    baths: String(listing.baths),
-    address: `${listing.address}, ${listing.community}`,
+    baths: listing.baths > 0 ? String(listing.baths) : '',
+    address:
+      listing.community.trim().length > 0
+        ? `${listing.address}, ${listing.community}`
+        : listing.address,
     sqft: listing.sqft > 0 ? String(listing.sqft) : '',
   }));
   const [aspects, setAspects] = useState<Record<AspectKey, boolean>>({
@@ -89,6 +92,23 @@ export function IntakeScreen({
   const [newAddress, setNewAddress] = useState('');
   const [error, setError] = useState<string | undefined>();
   const [busy, setBusy] = useState(false);
+
+  // The screen can mount before the real listing loads; keep the form tied to
+  // the selected listing instead of the first (demo) record it saw.
+  useEffect(() => {
+    setFacts({
+      price: listing.price,
+      beds: listing.beds > 0 ? String(listing.beds) : '',
+      baths: listing.baths > 0 ? String(listing.baths) : '',
+      address:
+        listing.community.trim().length > 0
+          ? `${listing.address}, ${listing.community}`
+          : listing.address,
+      sqft: listing.sqft > 0 ? String(listing.sqft) : '',
+    });
+    setSqftEditing(false);
+    setSqftSkipped(listing.sqft > 0);
+  }, [listing.id, listing.price, listing.beds, listing.baths, listing.sqft, listing.address, listing.community]);
 
   useEffect(() => {
     if (folder !== undefined) setActiveFolder(folder);
@@ -163,29 +183,28 @@ export function IntakeScreen({
   const bathsLine = listing.baths > 0 ? `${listing.baths} bath` : undefined;
   const specLine = [bedsLine, bathsLine].filter(Boolean).join(' · ') || 'Spec line';
 
-  // Look previews are typography samples: the only real values in them come
-  // from the listing, the rest are literal template placeholders.
+  // Look previews are typography samples built from the real listing values.
   const looks: Array<{ id: LookId; name: string; desc: string; line: string; caption: string }> = [
     {
       id: 'calm',
       name: 'Calm',
       desc: 'Serif type, slow cuts, room to breathe.',
-      line: listing.community || 'Community',
-      caption: listing.address || 'Address line',
+      line: listing.community || listing.address,
+      caption: listing.address,
     },
     {
       id: 'social',
       name: 'Social',
       desc: 'Bold hooks, faster cuts, captions on.',
-      line: listing.price || 'Price',
-      caption: specLine,
+      line: listing.price,
+      caption: specLine === 'Spec line' ? listing.address : specLine,
     },
     {
       id: 'walkthrough',
       name: 'Walkthrough',
       desc: 'Room order, labels, steady pace.',
-      line: 'Room name',
-      caption: 'Room label',
+      line: listing.address,
+      caption: specLine === 'Spec line' ? listing.community || listing.address : specLine,
     },
   ];
 

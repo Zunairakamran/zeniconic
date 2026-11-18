@@ -423,6 +423,7 @@ export interface ZeniconicApi {
   };
   shots: {
     list(listingId: string): Promise<ShotRow[]>;
+    thumbnail(input: { listingId: string; shotId: string }): Promise<{ dataUrl: string }>;
   };
   jobs: {
     list(): Promise<JobRecord[]>;
@@ -656,6 +657,12 @@ export const api: ZeniconicApi = {
           ...(candidate.rejected === undefined ? {} : { defects: [candidate.rejected] }),
         };
       });
+    },
+
+    async thumbnail(input) {
+      const desktop = bridge();
+      if (desktop) return desktop.invoke('shots:thumbnail', input);
+      throw new Error('Shot previews need the desktop app.');
     },
   },
 

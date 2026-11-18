@@ -731,6 +731,70 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     );
   }
 
+  async shotThumbnail(listingId: string, shotId: string): Promise<{ dataUrl: string }> {
+    const listingDir = this.store.dirFor(listingId);
+    const index =
+      (await readFootageIndex(listingDir, { tagged: true }).catch(() => undefined)) ??
+      (await readFootageIndex(listingDir).catch(() => undefined));
+    if (index === undefined) throw new Error('No analysed footage for this listing.');
+
+    let source: { file: string; shot: { startSec: number; endSec: number; representativeFrames?: number[] }; fps: number } | undefined;
+    for (const clip of index.clips) {
+      const shot = clip.shots.find((entry) => entry.id === shotId);
+      if (shot === undefined) continue;
+      source = {
+        file: clip.file,
+        shot: {
+          startSec: shot.startSec,
+          endSec: shot.endSec,
+          ...(shot.representativeFrames === undefined
+            ? {}
+            : { representativeFrames: shot.representativeFrames }),
+        },
+        fps: clip.probe.fps > 0 ? clip.probe.fps : 30,
+      };
+      break;
+    }
+    if (source === undefined) throw new Error(`Shot "${shotId}" was not found.`);
+
+    const cacheDir = join(listingDir, 'cache', 'thumbs');
+    const cachePath = join(cacheDir, `${shotId}.jpg`);
+    if (await exists(cachePath)) {
+      const cached = await readFile(cachePath);
+      return { dataUrl: `data:image/jpeg;base64,${cached.toString('base64')}` };
+    }
+
+    const frame = source.shot.representativeFrames?.[0];
+    const at =
+      frame !== undefined && Number.isFinite(frame)
+        ? Math.max(0, frame / source.fps)
+        : (source.shot.startSec + source.shot.endSec) / 2;
+
+    const capture = await runProcessCapture(
+      ffmpegPath(),
+      [
+        '-y', '-v', 'error',
+        '-ss', at.toFixed(3),
+        '-i', source.file,
+        '-frames:v', '1',
+        '-vf', 'scale=360:-2',
+        '-f', 'image2',
+        '-vcodec', 'mjpeg',
+        'pipe:1',
+      ],
+      { timeoutMs: 15_000 },
+    );
+    if (capture.code !== 0 || capture.stdout.length === 0) {
+      throw new Error(
+        `Shot preview failed: ${capture.stderr.trim() || `ffmpeg exited ${String(capture.code)}`}`,
+      );
+    }
+
+    await mkdir(cacheDir, { recursive: true });
+    await writeFile(cachePath, capture.stdout);
+    return { dataUrl: `data:image/jpeg;base64,${capture.stdout.toString('base64')}` };
+  }
+
   async previewVariant(input: {
     listingId: string;
     variantId: string;

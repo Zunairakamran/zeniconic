@@ -579,3 +579,9 @@
     flex-wrap: wrap;
   }
 }
+
+.variantscreen__scene.is-live::before,
+.variantscreen__scene.is-live::after {
+  display: none;
+}
+

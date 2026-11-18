@@ -61,6 +61,16 @@ can approve or ask to change.
 |---|---|
 | ![Variants](docs/screenshots/variants.png) | ![Refine](docs/screenshots/refine.png) |
 
+## Demo
+
+`demo/` contains a real build from 18 presenter clips: a 30 s Calm cut, the 38 s
+Marketing 38 cut, cover frames, the presenter transcript and ten Electron
+screenshots. Facts were taken from the presenter's audio (one bedroom, from
+AED 1,400,000) and the Marina Gate 1 listing already cited in
+`docs/MARKETING-CUTS.md`; baths and sq ft were left blank because they are not
+stated. Rebuild with `npx tsx scripts/demo-build.ts` and
+`node scripts/demo-capture.mjs`.
+
 ## Install
 
 Download `Zeniconic-Setup-<version>-x64.exe` from Releases and run it. Windows may

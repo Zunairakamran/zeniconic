@@ -943,6 +943,7 @@ describe('channel contract', () => {
     'analysis:start': 1,
     'variants:list': 1,
     'shots:list': 1,
+    'shots:thumbnail': 1,
     'tagging:estimate': 1,
     'tagging:start': 1,
     'variants:approve': 1,
@@ -1141,6 +1142,16 @@ describe('shots', () => {
   it('returns an empty list before analysis', async () => {
     store.seed({ id: LISTING_ID });
     await expect(handlers['shots:list'](LISTING_ID)).resolves.toEqual([]);
+  });
+
+  it('renders one JPEG data URL per requested shot', async () => {
+    store.seed({ id: LISTING_ID });
+    await expect(
+      handlers['shots:thumbnail']({ listingId: LISTING_ID, shotId: 's_aaaaaaaa_sh1' }),
+    ).resolves.toEqual({ dataUrl: 'data:image/jpeg;base64,/9j/2Q==' });
+    await expect(
+      handlers['shots:thumbnail']({ listingId: LISTING_ID, shotId: '../evil' }),
+    ).rejects.toMatchObject({ code: 'E_INVALID_INPUT' });
   });
 
   it('rejects a malformed listing id and an unknown listing', async () => {

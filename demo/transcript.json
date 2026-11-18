@@ -1,0 +1,15 @@
+{
+  "model": "elevenlabs/scribe-v2",
+  "costUsd": 0.00543458,
+  "durationSec": 88.93,
+  "language": "eng",
+  "text": "With private elevators coming right up to your apartment. Where one-bedroom apartment starts from only one point four million dirhams. And yes, your new home is ready. Whether you're buying your new property or looking for an investment, this opportunity is worth exploring. Thoughtfully designed spaces, modern interiors, and everything you need to feel at home. Yeah",
+  "segments": [
+    {
+      "id": 0,
+      "start": 0,
+      "end": 88.93,
+      "text": "With private elevators coming right up to your apartment. Where one-bedroom apartment starts from only one point four million dirhams. And yes, your new home is ready. Whether you're buying your new property or looking for an investment, this opportunity is worth exploring. Thoughtfully designed spaces, modern interiors, and everything you need to feel at home. Yeah"
+    }
+  ]
+}

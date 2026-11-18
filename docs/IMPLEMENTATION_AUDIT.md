@@ -8,8 +8,8 @@ file, a test, or a live run noted inline.
 | Gate | Result |
 |---|---|
 | `npm run typecheck` | clean |
-| `npx vitest run` | **1488 passed, 1 skipped** (123 files) |
-| `apps/render` suite | **75 passed, 1 skipped** |
+| `npx vitest run` | **1489 passed, 1 skipped** (123 files) |
+| `apps/render` suite | **76 passed** |
 | `node scripts/e2e.mjs` | **66/66**, 12 screenshots |
 | `npm run build` | passes |
 | Live model runs | agent, tagging, transcription, TTS, render review, Lyria music (below) |

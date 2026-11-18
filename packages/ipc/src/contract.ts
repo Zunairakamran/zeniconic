@@ -48,6 +48,8 @@ export interface VariantSummary {
 export interface VariantPreview {
   /** Absolute path to a single 1080-wide preview frame. */
   stillPath: string;
+  /** The same frame as a data URL, for renderers that cannot load file://. */
+  stillUrl?: string;
 }
 
 /** One indexed shot, as the review screen needs it. */
@@ -387,6 +389,11 @@ export interface IpcContract {
   'variants:list': (listingId: string) => Promise<VariantSummary[]>;
   /** The persisted shot index; empty before analysis. */
   'shots:list': (listingId: string) => Promise<ShotRow[]>;
+  /** One cached JPEG preview of a shot, as a data URL (never a path). */
+  'shots:thumbnail': (input: {
+    listingId: string;
+    shotId: string;
+  }) => Promise<{ dataUrl: string }>;
   /** Price the vision pass for the persisted shots. */
   'tagging:estimate': (listingId: string) => Promise<TaggingEstimateDto>;
   /** Run the vision pass now and write the tagged index. */
@@ -505,6 +512,7 @@ export const CHANNELS: readonly Channel[] = [
   'analysis:start',
   'variants:list',
   'shots:list',
+  'shots:thumbnail',
   'tagging:estimate',
   'tagging:start',
   'variants:approve',

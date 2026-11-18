@@ -1,4 +1,4 @@
-import { existsSync } from 'node:fs';
+import { existsSync, mkdirSync } from 'node:fs';
 import { mkdtemp, rm, stat } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -12,6 +12,10 @@ import { missingClips, renderOverlayStill } from '../src/render';
 
 const EXAMPLE = example as unknown as Edl;
 const LISTING = fileURLToPath(new URL('../../../data/fixtures/', import.meta.url));
+// `data/` is gitignored, so a clean checkout has no workspace for the renderer
+// to resolve relative clip paths against. The test supplies an empty one; the
+// overlay still does not need the missing source clips.
+mkdirSync(LISTING, { recursive: true });
 const BRAND: BrandKit = { agentName: 'Sara Whitfield', agency: 'Whitfield & Co' };
 
 const chromiumReady = chromiumAvailable();

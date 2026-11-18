@@ -441,11 +441,18 @@ export function RefineChatScreen({
               <div className="refine__priceblock">
                 <div className="refine__price">{listing.price}</div>
                 <div className="refine__addr">
-                  {listing.address}, {listing.community}
+                  {listing.community.trim().length > 0
+                    ? `${listing.address}, ${listing.community}`
+                    : listing.address}
                 </div>
                 <div className="refine__specs">
-                  {listing.beds} bed · {listing.baths} bath ·{' '}
-                  {listing.sqft.toLocaleString('en-GB')} sq ft
+                  {[
+                    listing.beds > 0 ? `${String(listing.beds)} bed` : undefined,
+                    listing.baths > 0 ? `${String(listing.baths)} bath` : undefined,
+                    listing.sqft > 0 ? `${listing.sqft.toLocaleString('en-GB')} sq ft` : undefined,
+                  ]
+                    .filter((value): value is string => value !== undefined)
+                    .join(' · ')}
                 </div>
               </div>
             </div>

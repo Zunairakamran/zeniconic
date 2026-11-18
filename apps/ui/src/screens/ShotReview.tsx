@@ -70,6 +70,7 @@ export function ShotReviewScreen({ listing, candidates, onNavigate, onRefreshSho
   const [estimate, setEstimate] = useState<{ shots: number; usd: number; tagged: number } | undefined>();
   const [tagBusy, setTagBusy] = useState(false);
   const [tagNote, setTagNote] = useState<string | undefined>();
+  const [thumbs, setThumbs] = useState<Record<string, string>>({});
 
   useEffect(() => {
     let live = true;
@@ -98,6 +99,28 @@ export function ShotReviewScreen({ listing, candidates, onNavigate, onRefreshSho
       live = false;
     };
   }, [listing.id, candidates.length]);
+
+  // Real frames come from the indexed clips; the CSS room art is only the
+  // fallback until (or unless) a thumbnail arrives.
+  useEffect(() => {
+    let live = true;
+    if (rows.length === 0) return () => { live = false; };
+    void (async () => {
+      for (const row of rows) {
+        if (thumbs[row.shotId] !== undefined) continue;
+        try {
+          const result = await api.shots.thumbnail({ listingId: listing.id, shotId: row.shotId });
+          if (live) setThumbs((current) => ({ ...current, [row.shotId]: result.dataUrl }));
+        } catch {
+          // Browser preview has no footage; keep the CSS fallback.
+        }
+      }
+    })();
+    return () => {
+      live = false;
+    };
+    // Thumbnails are fetched once per row set.
+  }, [rows, listing.id]);
 
   const runTagging = async (): Promise<void> => {
     if (tagBusy) return;
@@ -289,7 +312,18 @@ export function ShotReviewScreen({ listing, candidates, onNavigate, onRefreshSho
                   key={shot.id}
                   className={`shotreview__tile${rejected ? ' is-rejected' : ''}`}
                 >
-                  <div className="shotreview__photo" data-room={shot.room.toLowerCase()}>
+                  <div
+                    className={`shotreview__photo${thumbs[shot.id] === undefined ? '' : ' is-live'}`}
+                    data-room={shot.room.toLowerCase()}
+                  >
+                    {thumbs[shot.id] === undefined ? null : (
+                      <img
+                        className="shotreview__thumb"
+                        src={thumbs[shot.id]}
+                        alt=""
+                        aria-hidden="true"
+                      />
+                    )}
                     {rejected ? (
                       <span className="shotreview__rejmark">
                         <Badge tone="fail">Rejected</Badge>

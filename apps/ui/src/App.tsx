@@ -344,11 +344,11 @@ export function App() {
 
   const previewVariant = async (id: string): Promise<string | undefined> => {
     try {
-      const { stillPath } = await api.variants.preview({
+      const { stillPath, stillUrl } = await api.variants.preview({
         listingId: selectedId,
         variantId: id,
       });
-      return stillPath;
+      return stillUrl ?? stillPath;
     } catch {
       return undefined;
     }
@@ -458,10 +458,10 @@ export function App() {
         </div>
 
         <div className="rail__account">
-          <span className="avatar">SW</span>
+          <span className="avatar">Z</span>
           <div>
-            <b>Sara Whitfield</b>
-            <span>Ashgrove &amp; Co</span>
+            <b>Local workspace</b>
+            <span>Zeniconic</span>
           </div>
         </div>
       </aside>
