@@ -14,7 +14,7 @@ import { existsSync } from 'node:fs';
 import { mkdtemp, readdir, readFile, rm, stat } from 'node:fs/promises';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
-import { join, resolve } from 'node:path';
+import { join, resolve, extname } from 'node:path';
 import { OpenRouterClient } from '../../packages/ai/src/index';
 import { JsonJobStore, JobRunner } from '../../packages/jobs/src/index';
 import type { StageExecutor } from '../../packages/jobs/src/index';
@@ -494,6 +494,33 @@ async function start(): Promise<void> {
       });
     },
     musicTrack: async () => (await settings.get()).musicTrack,
+    transcribe: async (file) => {
+      const key = await settings.getKey();
+      if (typeof key !== 'string' || key.trim().length === 0) {
+        throw new Error('Add an OpenRouter key to transcribe captions.');
+      }
+      const data = await readFile(file);
+      const result = await transcribeAudio(
+        { data, format: extname(file).replace(/^\./, '') || 'm4a' },
+        { getApiKey: () => key, model: models.roles.transcription.model },
+      );
+      return {
+        words: result.words.map((word) => ({
+          text: word.word,
+          startSec: word.start,
+          endSec: word.end,
+        })),
+        ...(result.costUsd === undefined ? {} : { costUsd: result.costUsd }),
+      };
+    },
+    transcriptionOnCost: async (usd, listingId) => {
+      await ledger.record({
+        role: 'transcription',
+        model: models.roles.transcription.model,
+        listingId,
+        costUsd: usd,
+      });
+    },
     tagging: {
       model: models.roles.tagging.model,
       maxUsd: 0.25,

@@ -68,12 +68,26 @@ export interface ShotRow {
   reason?: string;
 }
 
+/** Visual caption preset the export should burn. */
+export type CaptionStyleId =
+  | 'social_bold'
+  | 'clean_reel'
+  | 'editorial'
+  | 'editorial_serif'
+  | 'luxury_gold'
+  | 'kinetic_bold'
+  | 'minimal_white'
+  | 'glass_pill'
+  | 'bold_bw';
+
 export interface ExportRequest {
   listingId: string;
   /** Render profiles (`vertical-social`, `feed-portrait`, `landscape`, `pin`). */
   profiles: string[];
   quality: ExportQuality;
   captions: CaptionMode;
+  /** Optional override; absent keeps the direction chosen at planning time. */
+  captionStyle?: CaptionStyleId;
   /** Restore presenter audio, synthesise a bridge voice, or music only. */
   voice: VoiceMode;
 }

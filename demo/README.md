@@ -6,9 +6,11 @@ Built on 2026-11-18 from the 18 presenter clips in `raw-clips/`.
 
 | Path | What it is |
 |---|---|
-| `cuts/…_calm_vertical-social_v1.mp4` | 30.0 s Calm variant, 1080×1920, studio voice, burned captions, music |
-| `cuts/…_marketing38_vertical-social_v1.mp4` | 38.0 s Marketing 38 campaign cut, 1080×1920 |
-| `covers/*.jpg` | Export cover frames |
+| `cuts/before_calm.mp4` | The original 30 s Calm cut, kept for comparison |
+| `cuts/after_calm.mp4` | The reworked 30 s Calm cut: narrative order, grade, captions, transitions, real music |
+| `cuts/before_marketing38.mp4` | The original 38 s Marketing 38 cut |
+| `cuts/after_marketing38.mp4` | The reworked 38 s campaign cut |
+| `screenshots/before-after-calm.jpg` | Frame-by-frame comparison at 2/6/12/24/28 s |
 | `screenshots/` | Real Electron UI captured against the demo listing (not the browser demo) |
 | `transcript.json` | Presenter transcription (Scribe v2) with provider cost |
 

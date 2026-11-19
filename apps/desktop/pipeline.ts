@@ -11,8 +11,9 @@
  */
 
 import { spawn } from 'node:child_process';
+import { createHash } from 'node:crypto';
 import { access, copyFile, link, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
-import { dirname, extname, isAbsolute, join, resolve } from 'node:path';
+import { dirname, extname, isAbsolute, join, resolve, basename } from 'node:path';
 import { buildLoudnormPass1, parseLoudnormJson } from '../../packages/audio/src/index';
 import { validateEdl } from '../../packages/edl/src/index';
 import type {
@@ -65,6 +66,8 @@ import {
 } from '../../services/tagging/src/index';
 import type { ChatClient } from '../../packages/ai/src/index';
 import { renderMarketingFilm } from '../../services/pipeline/marketing';
+import { analyzeMusicFile } from '../../services/pipeline/music-director';
+import { direct } from '../../packages/creative/src/index';
 import {
   pruneSegments,
   renderPictureWithSegments,
@@ -72,6 +75,7 @@ import {
 import {
   renderFfmpegOverlays,
   resolveFontsDirectory,
+  writeAssFile,
   writeSrtFile,
 } from '../../services/pipeline/ffmpeg-overlays';
 import type {
@@ -120,6 +124,10 @@ export interface DesktopPipelineOptions {
   musicTrack?: () => string | undefined | Promise<string | undefined>;
   /** Optional vision tagging; absent leaves the filename heuristic in charge. */
   tagging?: TaggingOptions;
+  /** Word-level transcript of the spoken track, for real caption timing. */
+  transcribe?: (file: string) => Promise<{ words: CaptionWord[]; costUsd?: number }>;
+  /** Records transcription spend after a caption pass. */
+  transcriptionOnCost?: (usd: number, listingId: string) => Promise<void> | void;
 }
 
 export interface TaggingOptions {
@@ -527,6 +535,12 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
   private readonly reduceMotion: boolean;
   private readonly voiceOnCost: ((usd: number, listingId: string) => Promise<void> | void) | undefined;
   private readonly musicTrack: (() => string | undefined | Promise<string | undefined>) | undefined;
+  private readonly transcribe:
+    | ((file: string) => Promise<{ words: CaptionWord[]; costUsd?: number }>)
+    | undefined;
+  private readonly transcriptionOnCost:
+    | ((usd: number, listingId: string) => Promise<void> | void)
+    | undefined;
 
   private readonly sources = new Map<string, SourceBinding>();
   private readonly analysed = new Map<string, Analysed>();
@@ -543,6 +557,8 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     this.reduceMotion = options.reduceMotion === true;
     this.voiceOnCost = options.voiceOnCost;
     this.musicTrack = options.musicTrack;
+    this.transcribe = options.transcribe;
+    this.transcriptionOnCost = options.transcriptionOnCost;
   }
 
   /** Called by `analysis:start` before the runner picks the job up. */
@@ -1167,6 +1183,8 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     profiles: string[];
     quality: ExportQuality;
     captions: CaptionMode;
+    /** Optional override for the caption preset chosen at planning time. */
+    captionStyle?: CaptionStyle;
     voice: VoiceMode;
     /** Auto cover frames are written unless this is explicitly false. */
     cover?: boolean;
@@ -1268,18 +1286,51 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
           // canvas becomes blurred bars, never a horizontal centre crop.
           const profileEdl = await this.edlForProfile(sourceEdl, profile);
 
-          // Captions follow the spoken track when the voice stage produced
-          // words; otherwise the EDL's curated words are the caption source.
-          // Dropping both is how an export used to ship picture-only.
+          // The studio voice returns phrase timings from the actual generated
+          // line durations, so splitting those is more trustworthy than
+          // transcribing a mix that already contains music. Scribe is used for
+          // presenter audio, where the words and timings are not known ahead.
+          const planWords =
+            voice.captions.length > 0
+              ? wordsFromCaptions(voice.captions, sourceEdl.format.targetDurationSec)
+              : [];
+          const spoken =
+            voice.provider !== 'studio' && input.captions !== 'off' && voice.audioPath !== undefined
+              ? await this.spokenCaptionWords(listingDir, voice.audioPath, listing.id).catch(
+                  () => [],
+                )
+              : [];
           const words =
-            voice.captions.length > 0 ? voice.captions : (profileEdl.captions.words ?? []);
+            planWords.length > 0
+              ? planWords
+              : spoken.length > 0
+                ? spoken
+                : (profileEdl.captions.words ?? []);
           captionWordCount = Math.max(captionWordCount, words.length);
+          const captionStyle = input.captionStyle ?? profileEdl.captions.style ?? SOCIAL_BOLD;
           const captionedEdl: Edl = {
             ...profileEdl,
+            // The spoken caption already names the address; keeping the address
+            // card as well repeats the same line on screen.
+            overlays:
+              input.captions === 'burned' || input.captions === 'both'
+                ? profileEdl.overlays.filter((overlay) => overlay.kind !== 'address')
+                : profileEdl.overlays,
             captions: {
               mode: captionModeFor(input.captions),
               language: profileEdl.captions.language ?? 'en-GB',
-              style: SOCIAL_BOLD,
+              style: captionStyle,
+              ...(profileEdl.captions.animation === undefined || input.captionStyle !== undefined
+                ? {}
+                : { animation: profileEdl.captions.animation }),
+              ...(profileEdl.captions.highlight === undefined
+                ? {}
+                : { highlight: profileEdl.captions.highlight }),
+              ...(profileEdl.captions.position === undefined
+                ? {}
+                : { position: profileEdl.captions.position }),
+              ...(profileEdl.captions.font === undefined ? {} : { font: profileEdl.captions.font }),
+              ...(profileEdl.captions.box === undefined ? {} : { box: profileEdl.captions.box }),
               ...(words.length === 0 ? {} : { words }),
             },
           };
@@ -1540,7 +1591,7 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     const rooms = [...new Set(edl.clips.flatMap((clip) => (clip.room ? [clip.room] : [])))]
       .slice(0, 4)
       .map((room) => room.replace(/_/g, ' '));
-    if (rooms.length > 0) parts.push(`A ${rooms.join(', ')} walkthrough.`);
+    if (rooms.length > 0) parts.push(`Featuring the ${rooms.join(', ')}.`);
 
     if (facts.price !== undefined && facts.price.trim().length > 0) {
       parts.push(`Offered at ${facts.price.trim()}.`);
@@ -1757,6 +1808,44 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
    * already-cut picture. A timeout marks Remotion unusable for the rest of the
    * export: waiting for the same wall twice is how a 30 s film takes 15 min.
    */
+  /**
+   * Burn the EDL captions onto a silent picture with libass. Remotion owns the
+   * motion picture and cards, but its caption layer is not used for the final:
+   * the ASS engine keeps word timings and styles exact.
+   */
+  private async burnAssCaptions(
+    picture: string,
+    edl: Edl,
+    workDir: string,
+    profile: ProfileId,
+  ): Promise<string> {
+    if ((edl.captions.words ?? []).length === 0) return picture;
+    const ass = join(workDir, 'captions.ass');
+    await writeAssFile(edl, ass, profile);
+    const output = join(workDir, `${profile}-captions.mp4`);
+    const result = await runProcess(
+      ffmpegPath(),
+      [
+        '-y', '-v', 'error',
+        '-i', picture,
+        '-vf', 'ass=captions.ass',
+        '-c:v', 'libx264',
+        '-preset', 'veryfast',
+        '-crf', '18',
+        '-pix_fmt', 'yuv420p',
+        '-an',
+        output,
+      ],
+      { cwd: workDir, timeoutMs: FFMPEG_TIMEOUT_MS },
+    );
+    if (result.code !== 0 || !(await exists(output))) {
+      throw new Error(
+        `The captions could not be burned: ${result.stderr.at(-1) ?? 'ffmpeg failed.'}`,
+      );
+    }
+    return output;
+  }
+
   private async renderOverlays(input: {
     edl: Edl;
     profile: ProfileId;
@@ -1802,7 +1891,11 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
           overlayCli,
           Math.min(this.remotionTimeoutMs(), Math.max(1, remaining)),
         );
-        return { output };
+        const captioned =
+          input.captions === 'burned' || input.captions === 'both'
+            ? await this.burnAssCaptions(output, input.edl, input.workDir, input.profile)
+            : output;
+        return { output: captioned };
       } catch (error) {
         const reason = messageOf(error);
         this.remotionUnavailable = true;
@@ -1897,7 +1990,6 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
       '--quality',
       input.quality,
     ];
-    if (input.captions === 'burned' || input.captions === 'both') args.push('--captions');
     if (this.reduceMotion) args.push('--reduce-motion');
     if (input.brand?.agentName !== undefined) args.push('--agent', input.brand.agentName);
     if (input.brand?.agency !== undefined) args.push('--agency', input.brand.agency);
@@ -1939,6 +2031,67 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
    * ceiling, deletes the file and fails loudly. Shipping a quiet or clipped
    * mix is worse than an export that says why it stopped.
    */
+  /**
+   * Real word timestamps for the spoken track. Scribe is optional: when no
+   * transcriber is injected the export keeps the phrase-level voice captions
+   * rather than inventing timings. Results are cached by the audio file bytes.
+   */
+  private async spokenCaptionWords(
+    listingDir: string,
+    audio: string,
+    listingId: string,
+  ): Promise<CaptionWord[]> {
+    if (this.transcribe === undefined) return [];
+    let cachePath: string;
+    try {
+      const info = await stat(audio);
+      const key = createHash('sha1')
+        .update(`${resolve(audio)}:${String(info.size)}:${String(info.mtimeMs)}`)
+        .digest('hex');
+      cachePath = join(listingDir, 'cache', 'captions', `${key}.json`);
+      const cached = JSON.parse(await readFile(cachePath, 'utf8')) as CaptionWord[];
+      if (Array.isArray(cached) && cached.length > 0) return cached;
+    } catch {
+      cachePath = '';
+    }
+
+    const result = await this.transcribe(audio);
+    const NON_SPEECH =
+      /^(music|applause|laughter|silence|jingle|intro jingle|outro jingle|intro music|outro music|background music|instrumental)$/i;
+    const words = result.words
+      .map((word) => {
+        const raw = word.text.trim();
+        const clean = raw.replace(/^[\[(]\s*/, '').replace(/\s*[\])]$/, '').trim();
+        return { clean, startSec: word.startSec, endSec: word.endSec };
+      })
+      .filter(
+        (word) =>
+          word.clean.length > 0 &&
+          /[A-Za-z0-9]/.test(word.clean) &&
+          !NON_SPEECH.test(word.clean) &&
+          word.endSec > word.startSec,
+      )
+      .map((word) => ({
+        text: word.clean,
+        startSec: roundTime(word.startSec),
+        endSec: roundTime(word.endSec),
+      }));
+    if (result.costUsd !== undefined && result.costUsd > 0) {
+      await Promise.resolve(this.transcriptionOnCost?.(result.costUsd, listingId)).catch(
+        () => undefined,
+      );
+    }
+    if (cachePath.length > 0 && words.length > 0) {
+      try {
+        await mkdir(dirname(cachePath), { recursive: true });
+        await writeFile(cachePath, `${JSON.stringify(words)}\n`, 'utf8');
+      } catch {
+        // A cache write must not fail an export.
+      }
+    }
+    return words;
+  }
+
   private async muxVoice(
     picture: string,
     voice: string,
@@ -1951,7 +2104,11 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     const ceiling = spec.truePeak;
 
     // Pass 1: measure at the delivery target so the JSON names the same mode
-    // the app will apply.
+    // the app will apply. A gentle compressor runs first: a sparse voice + music
+    // mix can have too much crest factor to hit -14 LUFS under a -1.5 dBTP
+    // ceiling, and a limiter would flatten it harder than this.
+    const compressor =
+      'acompressor=threshold=-20dB:ratio=2.5:attack=8:release=180:makeup=1';
     const pass1 = await runProcessCapture(
       ffmpegPath(),
       [
@@ -1960,7 +2117,7 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
         '-i',
         voice,
         '-af',
-        `loudnorm=I=${targetLufs}:TP=${ceiling}:print_format=json`,
+        `${compressor},loudnorm=I=${targetLufs}:TP=${ceiling}:print_format=json`,
         '-f',
         'null',
         '-',
@@ -1996,8 +2153,8 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     // Two attempts: the measured pass usually lands within 0.1 LU, but a bed
     // trimmed to the timeline can sit half a LU off. One corrective `volume`
     // pass closes that without re-running the whole analysis.
-    for (let attempt = 0; attempt < 2; attempt += 1) {
-      const filters = [loudnorm];
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const filters = [compressor, loudnorm];
       if (Math.abs(correctionDb) >= 0.05) {
         filters.push(`volume=${correctionDb.toFixed(2)}dB`);
       }
@@ -2397,6 +2554,7 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
           };
 
     const total = PLANNED_VARIANTS.length;
+    const music = await this.planningMusic();
 
     for (const [index, spec] of PLANNED_VARIANTS.entries()) {
       if (signal.aborted) throw new Error('Job cancelled.');
@@ -2409,8 +2567,25 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
           EXPORT_PROFILE,
           spec,
           seedFor(`${listing.id}:${spec.id}`),
+          music,
           style,
         );
+        const captionStyle =
+          spec.format === MARKETING_FORMAT_ID || spec.look === 'marketing'
+            ? ('luxury_gold' as const)
+            : spec.look === 'social'
+              ? ('kinetic_bold' as const)
+              : spec.look === 'walkthrough'
+                ? ('minimal_white' as const)
+                : ('editorial_serif' as const);
+        edl = {
+          ...edl,
+          captions: {
+            ...edl.captions,
+            style: captionStyle,
+            animation: captionStyle === 'kinetic_bold' ? 'word_by_word' : 'rise',
+          },
+        };
       } catch (error) {
         // Only the marketing brief is optional: a pool that cannot carry the
         // beat sheet must not cost the user the three looks, and it must never
@@ -2459,12 +2634,42 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     return saveVariants(this.store.dirFor(listing.id), plans);
   }
 
+  private async planningMusic(): Promise<{
+    trackId: string;
+    src: string;
+    beatGrid: number[];
+    gainDb: number;
+    duckUnderVoiceDb: number;
+  }> {
+    const file = await this.findMusicTrack().catch(() => undefined);
+    if (file === undefined) {
+      return { trackId: 'none', src: '', beatGrid: [], gainDb: -18, duckUnderVoiceDb: -12 };
+    }
+    let beatGrid: number[] = [];
+    try {
+      const profile = analyzeMusicFile(file);
+      beatGrid = profile.beats;
+    } catch (error) {
+      console.warn(
+        `[pipeline] music beat analysis failed: ${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+    return {
+      trackId: basename(file),
+      src: file,
+      beatGrid,
+      gainDb: -18,
+      duckUnderVoiceDb: -12,
+    };
+  }
+
   private plan(
     listing: ListingRecord,
     analysed: Analysed,
     profile: ProfileId,
     spec: PlannedVariantSpec,
     seed: number,
+    music: { trackId: string; src: string; beatGrid: number[]; gainDb: number; duckUnderVoiceDb: number },
     style?: { averageShotSec?: number; pacing?: 'slow' | 'medium' | 'fast' },
   ): Edl {
     if (analysed.candidates.length === 0) {
@@ -2475,8 +2680,7 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
       listingId: listing.id,
       candidates: analysed.candidates,
       facts: plannerFacts(listing.facts),
-      // The music bank is a later stage; an empty src means no audio track.
-      music: { trackId: 'none', src: '', beatGrid: [], gainDb: -18, duckUnderVoiceDb: -12 },
+      music,
       profile,
       targetSec: spec.targetDurationSec,
       format: spec.format,
@@ -2488,7 +2692,21 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
       ...(style === undefined ? {} : { style }),
     });
 
-    return planEdl(request);
+    const planned = planEdl(request);
+    try {
+      return direct(planned, {
+        beatGrid: music.beatGrid,
+        gradePreset: spec.look === 'marketing' ? 'luxury' : undefined,
+        addEffects: true,
+        addTransitions: true,
+        preserveMarketingStructure: spec.format === 'marketing_38',
+      }).edl;
+    } catch (error) {
+      console.warn(
+        `[pipeline] creative pass skipped for ${spec.id}: ${error instanceof Error ? error.message : String(error)}`,
+      );
+      return planned;
+    }
   }
 
   private async requireListing(id: string): Promise<ListingRecord> {

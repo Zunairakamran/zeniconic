@@ -16,7 +16,7 @@ short audio slices go to the model provider.
 | Source | private `Zunairakamran/zeniconic`, branch `main` |
 | Releases | public `Zunairakamran/zeniconic-releases`, tag `v0.1.0` |
 | Installer | `Zeniconic-Setup-0.1.0-x64.exe`, ~198 MB, unsigned |
-| Tests | 1489 root + 76 renderer vitest, 66/66 route checks, both themes AA |
+| Tests | 1566 root + 76 renderer vitest, 66/66 route checks, both themes AA |
 | Data | dev `D:\video\data`, packaged `%APPDATA%\Zeniconic\data` |
 
 ## Shipped and wired

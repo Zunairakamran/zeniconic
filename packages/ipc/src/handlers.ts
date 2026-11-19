@@ -21,6 +21,7 @@ import { REMIX_ROOMS, isRemixRoom } from '../../../services/remix/src/rooms';
 import type {
   AgentRunResponse,
   CaptionMode,
+  CaptionStyleId,
   Channel,
   ChatApplyRequest,
   ChatApplyResult,
@@ -97,6 +98,7 @@ export interface PipelinePort {
     profiles: string[];
     quality: ExportQuality;
     captions: CaptionMode;
+    captionStyle?: CaptionStyleId;
     voice: VoiceMode;
   }): Promise<ExportResult>;
 }
@@ -389,6 +391,26 @@ function requireCaptionMode(value: unknown): CaptionMode {
     throw invalid('Captions must be off, burned, srt or both.');
   }
   return value as CaptionMode;
+}
+
+const CAPTION_STYLES: readonly CaptionStyleId[] = [
+  'social_bold',
+  'clean_reel',
+  'editorial',
+  'editorial_serif',
+  'luxury_gold',
+  'kinetic_bold',
+  'minimal_white',
+  'glass_pill',
+  'bold_bw',
+];
+
+function requireCaptionStyle(value: unknown): CaptionStyleId {
+  if (value === undefined) throw invalid('A caption style is required.');
+  if (typeof value !== 'string' || !(CAPTION_STYLES as readonly string[]).includes(value)) {
+    throw invalid('Choose a caption style from the presets.');
+  }
+  return value as CaptionStyleId;
 }
 
 function requireBoolean(value: unknown, label: string): boolean {
@@ -1415,6 +1437,8 @@ export function createHandlers(deps: HandlerDeps): Handlers {
       const profiles = requireProfiles(raw.profiles);
       const quality = requireQuality(raw.quality);
       const captions = requireCaptionMode(raw.captions);
+      const captionStyle =
+        raw.captionStyle === undefined ? undefined : requireCaptionStyle(raw.captionStyle);
       const voice = requireVoiceMode(raw.voice);
       const listing = await requireListing(store, listingId);
 
@@ -1423,6 +1447,7 @@ export function createHandlers(deps: HandlerDeps): Handlers {
         profiles,
         quality,
         captions,
+        ...(captionStyle === undefined ? {} : { captionStyle }),
         voice,
       });
 

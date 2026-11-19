@@ -11,6 +11,7 @@ import type {
   AgentRunRequest,
   AgentRunResponse,
   CaptionMode,
+  CaptionStyleId,
   Channel,
   ChatApplyRequest,
   ChatApplyResult,
@@ -446,6 +447,7 @@ export interface ZeniconicApi {
       profiles: string[];
       quality: ExportQuality;
       captions: CaptionMode;
+      captionStyle?: CaptionStyleId;
       voice: VoiceMode;
     }): Promise<{ files: string[]; exportDir: string; warnings?: string[] }>;
   };

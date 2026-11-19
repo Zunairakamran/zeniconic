@@ -88,7 +88,7 @@ Companion: `docs/IMPLEMENTATION_AUDIT.md` (feature-by-feature status).
 
 ```
 npm run typecheck                       clean
-npx vitest run                          1489 passed, 1 skipped (123 files)
+npx vitest run                          1566 passed, 1 skipped (126 files)
 npx vitest run --config apps/render     76 passed
 npm run build                           passes
 node scripts/e2e.mjs                    66/66, 12 screenshots

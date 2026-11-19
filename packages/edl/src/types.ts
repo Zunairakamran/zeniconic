@@ -401,7 +401,12 @@ export type CaptionStyle =
   | 'editorial_serif'
   | 'social_bold'
   | 'clean_reel'
-  | 'editorial';
+  | 'editorial'
+  | 'luxury_gold'
+  | 'kinetic_bold'
+  | 'minimal_white'
+  | 'glass_pill'
+  | 'bold_bw';
 
 export type TextAnimation =
   | 'none'

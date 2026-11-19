@@ -8,6 +8,7 @@
  * Usage: npx tsx scripts/demo-build.ts
  */
 import { readFileSync } from 'node:fs';
+import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { OpenRouterClient } from '../packages/ai/src/index';
 import { JobRunner, JsonJobStore } from '../packages/jobs/src/index';
@@ -18,6 +19,7 @@ import type { ListingRecord } from '../packages/store/src/index';
 import { DesktopPipeline } from '../apps/desktop/pipeline';
 import { readVariants, setVariantApproval } from '../apps/desktop/variants';
 import { configureStudioVoice, DEFAULT_VOICE_ID } from '../services/voice/src/index';
+import { transcribeAudio } from '../services/remix/src/index';
 import models from '../services/pipeline/models.json';
 
 const ROOT = resolve('data');
@@ -62,6 +64,29 @@ async function main(): Promise<void> {
     dataDir: ROOT,
     repoRoot: process.cwd(),
     ttsModel: models.roles.tts.model,
+    musicTrack: () => 'luxury-deep-house-112.mp3',
+    transcribe: async (file) => {
+      const result = await transcribeAudio(
+        { data: await readFile(file), format: 'm4a' },
+        { getApiKey: () => apiKey, model: models.roles.transcription.model },
+      );
+      return {
+        words: result.words.map((word) => ({
+          text: word.word,
+          startSec: word.start,
+          endSec: word.end,
+        })),
+        ...(result.costUsd === undefined ? {} : { costUsd: result.costUsd }),
+      };
+    },
+    transcriptionOnCost: async (usd, listingId) => {
+      await ledger.record({
+        role: 'transcription',
+        model: models.roles.transcription.model,
+        listingId,
+        costUsd: usd,
+      });
+    },
     onProgress: (event) =>
       console.log(`[demo] ${event.stage} ${String(event.percent)}% ${event.status}`),
     tagging: {

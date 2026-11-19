@@ -1,6 +1,7 @@
 import type {
   AgentRunResponse,
   CaptionMode,
+  CaptionStyleId,
   ChatApplyRequest,
   ChatApplyResult,
   ChatResult,
@@ -100,6 +101,7 @@ export interface ScreenProps {
   onExport: (input: {
     quality: ExportQuality;
     captions: CaptionMode;
+    captionStyle?: CaptionStyleId;
     voice: VoiceMode;
   }) => Promise<{ files: string[]; exportDir: string; warnings?: string[] }>;
 

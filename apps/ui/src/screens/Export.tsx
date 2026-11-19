@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import type { CaptionMode, ExportQuality } from '../../../../packages/ipc/src/index';
+import type { CaptionMode, CaptionStyleId, ExportQuality } from '../../../../packages/ipc/src/index';
 import { api } from '../api';
 import { Badge, Button, Card, Icon, Progress } from '../ui';
 import type { ScreenProps } from '../types';
@@ -75,6 +75,16 @@ const voiceOptions: Array<{ value: VoiceMode; label: string; hint: string }> = [
   { value: 'music', label: 'Music only', hint: 'Free, on this machine' },
 ];
 
+const captionStyles: Array<{ value: CaptionStyleId; label: string }> = [
+  { value: 'luxury_gold', label: 'Luxury gold editorial' },
+  { value: 'editorial_serif', label: 'Editorial serif' },
+  { value: 'kinetic_bold', label: 'Kinetic bold' },
+  { value: 'minimal_white', label: 'Minimal white' },
+  { value: 'social_bold', label: 'Social bold' },
+  { value: 'glass_pill', label: 'Glass pill karaoke' },
+  { value: 'bold_bw', label: 'Bold black & white' },
+];
+
 function formatDuration(seconds: number): string {
   const minutes = Math.floor(seconds / 60);
   const rest = Math.round(seconds % 60);
@@ -97,6 +107,7 @@ export function ExportScreen({
 }: ScreenProps) {
   const [quality, setQuality] = useState<ExportQuality>('standard');
   const [captions, setCaptions] = useState<CaptionMode>('burned');
+  const [captionStyle, setCaptionStyle] = useState<CaptionStyleId>('luxury_gold');
   const [voice, setVoice] = useState<VoiceMode>('restore');
   const [cover, setCover] = useState<CoverMode>('auto');
   const [coverFrame, setCoverFrame] = useState(6);
@@ -140,7 +151,7 @@ export function ExportScreen({
     setPct(0);
     setPhase('rendering');
     try {
-      const result = await onExport({ quality, captions, voice });
+      const result = await onExport({ quality, captions, captionStyle, voice });
       setFiles(result.files);
       setWarnings(result.warnings ?? []);
       setExportDir(result.exportDir);
@@ -396,6 +407,22 @@ export function ExportScreen({
               ))}
             </div>
             <p className="export__note">Captions are on by default for social.</p>
+            <label className="export__note" htmlFor="export-caption-style" style={{ display: 'block', marginTop: 10 }}>
+              Caption preset
+            </label>
+            <select
+              id="export-caption-style"
+              value={captionStyle}
+              onChange={(event) => setCaptionStyle(event.target.value as CaptionStyleId)}
+              disabled={captions === 'off' || captions === 'srt'}
+              style={{ width: '100%', marginTop: 6, padding: '8px 10px', borderRadius: 8 }}
+            >
+              {captionStyles.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
           </fieldset>
 
           <fieldset className="export__group">

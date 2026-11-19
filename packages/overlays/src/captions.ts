@@ -27,7 +27,15 @@ import type { CaptionCueFrames } from './types';
 // Style contract (docs/CAPTIONS.md, schema 1.1)
 // ---------------------------------------------------------------------------
 
-export type CaptionPresetId = 'social_bold' | 'clean_reel' | 'editorial';
+export type CaptionPresetId =
+  | 'social_bold'
+  | 'clean_reel'
+  | 'editorial'
+  | 'luxury_gold'
+  | 'kinetic_bold'
+  | 'minimal_white'
+  | 'glass_pill'
+  | 'bold_bw';
 
 export type CaptionFont = 'bricolage' | 'archivo' | 'instrument_serif';
 
@@ -155,6 +163,86 @@ export const CAPTION_PRESETS: Readonly<Record<CaptionPresetId, CaptionStyle>> = 
     maxLines: CAPTION_MAX_LINES,
     maxCharsPerLine: CAPTION_MAX_CHARS,
   }),
+  luxury_gold: Object.freeze({
+    preset: 'luxury_gold',
+    font: 'instrument_serif',
+    weight: 400,
+    sizeBase: 68,
+    case: 'title',
+    align: 'center',
+    position: 'bottom',
+    colour: 'paper',
+    accentColour: 'brass',
+    accent: 'longest_word',
+    backing: 'none',
+    animation: 'rise',
+    maxLines: CAPTION_MAX_LINES,
+    maxCharsPerLine: 22,
+  }),
+  kinetic_bold: Object.freeze({
+    preset: 'kinetic_bold',
+    font: 'bricolage',
+    weight: 400,
+    sizeBase: 92,
+    case: 'upper',
+    align: 'center',
+    position: 'bottom',
+    colour: 'paper',
+    accentColour: 'brass',
+    accent: 'longest_word',
+    backing: 'none',
+    animation: 'word_by_word',
+    maxLines: CAPTION_MAX_LINES,
+    maxCharsPerLine: 18,
+  }),
+  minimal_white: Object.freeze({
+    preset: 'minimal_white',
+    font: 'archivo',
+    weight: 300,
+    sizeBase: 56,
+    case: 'sentence',
+    align: 'center',
+    position: 'bottom',
+    colour: 'paper',
+    accentColour: 'brass',
+    accent: 'none',
+    backing: 'soft_shadow',
+    animation: 'fade',
+    maxLines: CAPTION_MAX_LINES,
+    maxCharsPerLine: 28,
+  }),
+  glass_pill: Object.freeze({
+    preset: 'glass_pill',
+    font: 'archivo',
+    weight: 600,
+    sizeBase: 56,
+    case: 'sentence',
+    align: 'center',
+    position: 'bottom',
+    colour: 'paper',
+    accentColour: 'brass',
+    accent: 'none',
+    backing: 'solid_plate',
+    animation: 'word_by_word',
+    maxLines: CAPTION_MAX_LINES,
+    maxCharsPerLine: 24,
+  }),
+  bold_bw: Object.freeze({
+    preset: 'bold_bw',
+    font: 'bricolage',
+    weight: 900,
+    sizeBase: 84,
+    case: 'upper',
+    align: 'center',
+    position: 'center',
+    colour: 'paper',
+    accentColour: 'brass',
+    accent: 'none',
+    backing: 'solid_plate',
+    animation: 'pop',
+    maxLines: CAPTION_MAX_LINES,
+    maxCharsPerLine: 18,
+  }),
 });
 
 /** Old EDL string styles keep rendering: each maps to a shipped preset. */
@@ -166,6 +254,11 @@ export const LEGACY_CAPTION_PRESETS: Readonly<Record<LegacyCaptionStyle, Caption
     social_bold: 'social_bold',
     clean_reel: 'clean_reel',
     editorial: 'editorial',
+    luxury_gold: 'luxury_gold',
+    kinetic_bold: 'kinetic_bold',
+    minimal_white: 'minimal_white',
+    glass_pill: 'glass_pill',
+    bold_bw: 'bold_bw',
   });
 
 export function isCaptionPreset(value: string): value is CaptionPresetId {
@@ -224,7 +317,7 @@ export function resolveCaptionStyle(input?: CaptionStyleInput): CaptionStyle {
   return {
     preset: presetId,
     font: input.font ?? base.font,
-    weight: clamp(input.weight ?? base.weight, 400, 800, base.weight),
+    weight: clamp(input.weight ?? base.weight, 400, 900, base.weight),
     sizeBase: clamp(input.sizeBase ?? base.sizeBase, 48, 96, base.sizeBase),
     case: input.case ?? base.case,
     align: input.align ?? base.align,

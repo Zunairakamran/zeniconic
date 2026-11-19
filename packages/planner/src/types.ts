@@ -101,4 +101,6 @@ export interface PlannedClip {
   reason: string;
   /** True for the bookend return to the hook's room. */
   isReturn?: boolean;
+  /** Measured motion energy carried from the candidate, 0..1. */
+  motion?: number;
 }

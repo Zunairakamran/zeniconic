@@ -512,6 +512,7 @@ export function planSequence(
     outSec: roundTime(slot.candidate.outSec),
     durationSec: durations[index] ?? spec.minShotSec,
     reason: slot.candidate.reason,
+    ...(slot.candidate.motion === undefined ? {} : { motion: slot.candidate.motion }),
     isReturn:
       index === chosen.length - 1 &&
       slot.candidate.room === hook.candidate.room &&

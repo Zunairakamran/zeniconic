@@ -72,6 +72,11 @@ export const CAPTION_STYLES: readonly CaptionStyle[] = [
   'social_bold',
   'clean_reel',
   'editorial',
+  'luxury_gold',
+  'kinetic_bold',
+  'minimal_white',
+  'glass_pill',
+  'bold_bw',
 ];
 
 export const STYLE_SCHEMA: object = {

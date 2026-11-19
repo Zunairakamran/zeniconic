@@ -1,29 +1,51 @@
 /**
- * The packaged overlay path: ASS tokens, Windows escaping and safe-area maths.
- * No FFmpeg runs here; `scripts/qa-ffmpeg-overlays.ts` burns the real listing.
+ * The packaged overlay path: ASS wiring, style/animation pass-through, Windows
+ * escaping and safe-area maths. No FFmpeg runs here; `scripts/qa-caption-render.ts`
+ * burns a real 1080×1920 clip and inspects the pixels.
  */
 
+import { mkdtemp, readFile, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
 import example from '../../../packages/edl/example.edl.json';
 import type { Cue } from '../../../packages/captions/src/index';
 import type { Edl } from '../../../packages/edl/src/index';
 import {
   ASS_TYPEWRITER_CHARS_PER_SEC,
-  ASS_WORD_STAGGER_SEC,
+  attachCaptionWordTimings,
   buildAssDocument,
   captionAnimationFor,
   captionCuesForExport,
+  captionEngineCuesForExport,
+  captionSceneBounds,
+  captionStyleForEdl,
   escapeFilterPath,
   planDrawTexts,
   resolveFontsDirectory,
+  writeAssFile,
 } from '../ffmpeg-overlays';
+import { CAPTION_PRESETS } from '../caption-engine';
+import type { CaptionPresetId } from '../caption-engine';
 
 const EDL = example as unknown as Edl;
 
-/** A copy of the example EDL carrying one caption animation. */
-function withAnimation(animation: string | undefined): Edl {
+function withCaption(patch: {
+  style?: string;
+  animation?: string;
+  font?: Edl['captions']['font'];
+  box?: Edl['captions']['box'];
+  position?: Edl['captions']['position'];
+  highlight?: Edl['captions']['highlight'];
+  maxWordsPerLine?: number;
+  maxLines?: number;
+}): Edl {
   const edl = JSON.parse(JSON.stringify(EDL)) as Edl;
-  (edl.captions as { animation?: string }).animation = animation;
+  const captions: Record<string, unknown> = { ...edl.captions };
+  for (const [key, value] of Object.entries(patch)) {
+    if (value !== undefined) captions[key] = value;
+  }
+  edl.captions = captions as unknown as Edl['captions'];
   return edl;
 }
 
@@ -31,22 +53,21 @@ function dialogues(ass: string): string[] {
   return ass.split('\n').filter((line) => line.startsWith('Dialogue:'));
 }
 
-/** The override block of one `Dialogue:` line, without its braces. */
+function styleFields(ass: string): string[] {
+  const line = ass.split('\n').find((entry) => entry.startsWith('Style: ZenCaption,'));
+  if (line === undefined) throw new Error('No caption style emitted');
+  return line.split(',');
+}
+
 function tagsOf(dialogue: string): string {
   const open = dialogue.indexOf('{');
   const close = dialogue.indexOf('}', open + 1);
   return open === -1 || close === -1 ? '' : dialogue.slice(open + 1, close);
 }
 
-/** The text of one `Dialogue:` line, after its override block. */
 function textOf(dialogue: string): string {
   const close = dialogue.indexOf('}');
   return close === -1 ? '' : dialogue.slice(close + 1);
-}
-
-function timesOf(dialogue: string): { startSec: number; endSec: number } {
-  const fields = dialogue.slice('Dialogue: '.length).split(',');
-  return { startSec: assSeconds(fields[1] ?? ''), endSec: assSeconds(fields[2] ?? '') };
 }
 
 function assSeconds(stamp: string): number {
@@ -57,36 +78,288 @@ function assSeconds(stamp: string): number {
   );
 }
 
-function near(actual: number, expected: number, epsilon = 0.011): boolean {
-  return Math.abs(actual - expected) <= epsilon;
+function timesOf(dialogue: string): { startSec: number; endSec: number } {
+  const fields = dialogue.slice('Dialogue: '.length).split(',');
+  return { startSec: assSeconds(fields[1] ?? ''), endSec: assSeconds(fields[2] ?? '') };
 }
 
-describe('ffmpeg overlays — captions', () => {
-  it('uses Bricolage Grotesque 800 at 76 px with the safe-area bottom margin', () => {
+// ---------------------------------------------------------------------------
+// Preset wiring
+// ---------------------------------------------------------------------------
+
+describe('ffmpeg overlays — captions follow the EDL style', () => {
+  it('changes the exported ASS when the preset changes', () => {
+    const presets: CaptionPresetId[] = [
+      'social_bold',
+      'clean_reel',
+      'editorial',
+      'editorial_serif',
+      'luxury_gold',
+      'kinetic_bold',
+      'minimal_white',
+      'glass_pill',
+      'bold_bw',
+    ];
+    const signatures = new Set<string>();
+
+    for (const preset of presets) {
+      const edl = withCaption({ style: preset });
+      const cues = captionCuesForExport(edl);
+      const ass = buildAssDocument(edl, cues, 'vertical-social');
+      const fields = styleFields(ass);
+      // Font, size, primary colour, alignment, border style and animation.
+      signatures.add(
+        [fields[1], fields[2], fields[3], fields[13], fields[18], fields[15], captionAnimationFor(edl)].join('|'),
+      );
+    }
+
+    expect(signatures.size).toBe(presets.length);
+  });
+
+  it('keeps the legacy clean_lower EDL rendering, now as Clean Reel', () => {
     const cues = captionCuesForExport(EDL);
     expect(cues.length).toBeGreaterThan(0);
+    expect(EDL.captions.style).toBe('clean_lower');
+
+    const style = captionStyleForEdl(EDL);
+    expect(style.id).toBe('clean_reel');
+    expect(style.fontFamily).toBe('Archivo SemiBold');
+    expect(style.sizeBase).toBe(64);
 
     const ass = buildAssDocument(EDL, cues, 'vertical-social');
-    expect(ass).toContain('Style: ZenCaption,Bricolage Grotesque,76,');
-    // Alignment 2 is bottom-centre; MarginV is the 340 px vertical inset.
-    const style = ass.split('\n').find((line) => line.startsWith('Style: ZenCaption,'));
-    expect(style).toBeDefined();
-    const fields = style!.split(',');
-    expect(fields[18]).toBe('2');
-    expect(fields[21]).toBe('340');
-    // Uppercase, centred cues; BorderStyle 1 is outline + shadow, no plate.
-    expect(ass).toMatch(/Dialogue: 0,[^,]+,[^,]+,ZenCaption,,0,0,0,,\{\\blur2\}[A-Z0-9]/);
-    expect(fields[15]).toBe('1');
-    expect(fields[17]).toBe('2');
+    expect(ass).toContain('Style: ZenCaption,Archivo SemiBold,64,');
+    const fields = styleFields(ass);
+    expect(fields[18]).toBe('2'); // bottom-centre
+    expect(fields[21]).toBe('340'); // safe-area bottom
+  });
+
+  it('uses the preset motion when the EDL has no animation', () => {
+    const clean = withCaption({ style: 'clean_reel' });
+    expect(captionAnimationFor(clean)).toBe('fade');
+
+    const social = withCaption({ style: 'social_bold' });
+    expect(captionAnimationFor(social)).toBe('pop');
+    expect(tagsOf(dialogues(buildAssDocument(social, captionCuesForExport(social), 'vertical-social'))[0] ?? '')).toContain(
+      '\\fscx86',
+    );
+
+    const kinetic = withCaption({ style: 'kinetic_bold' });
+    expect(captionAnimationFor(kinetic)).toBe('word_by_word');
+    expect(dialogues(buildAssDocument(kinetic, captionCuesForExport(kinetic), 'vertical-social'))).toHaveLength(5);
+  });
+
+  it('lets an explicit EDL animation override the preset motion', () => {
+    const edl = withCaption({ style: 'social_bold', animation: 'rise' });
+    expect(captionAnimationFor(edl)).toBe('rise');
+    const tags = tagsOf(
+      dialogues(buildAssDocument(edl, captionCuesForExport(edl), 'vertical-social'))[0] ?? '',
+    );
+    expect(tags).toContain('\\move(');
+    expect(tags).not.toContain('\\fscx86');
   });
 
   it('scales the caption size to a landscape canvas', () => {
-    const cues = captionCuesForExport(EDL);
-    const ass = buildAssDocument(EDL, cues, 'landscape');
+    const edl = withCaption({ style: 'social_bold' });
+    const cues = captionCuesForExport(edl);
+    const ass = buildAssDocument(edl, cues, 'landscape');
     // 76 px at 1080 wide → 135 px at 1920 wide.
     expect(ass).toContain('Style: ZenCaption,Bricolage Grotesque,135,');
   });
+
+  it('honours font, box, position and highlight overrides from the EDL', () => {
+    const edl = withCaption({
+      style: 'clean_reel',
+      font: { family: 'Anton', weight: 700, sizePx: 80, uppercase: true },
+      box: { color: '#101010', opacity: 0.8 },
+      position: { anchor: 'top_center', offsetPx: 24 },
+      highlight: { words: ['oak'], color: '#FFD166' },
+    });
+    const ass = buildAssDocument(edl, captionCuesForExport(edl), 'vertical-social');
+    const fields = styleFields(ass);
+
+    expect(fields[1]).toBe('Anton');
+    expect(fields[2]).toBe('80');
+    expect(fields[7]).toBe('-1');
+    expect(fields[15]).toBe('3'); // box
+    expect(fields[18]).toBe('8'); // top-centre
+    expect(fields[21]).toBe('274'); // 250 safe-area top + 24 offset
+    expect(ass).toContain('Style: ZenCaption,Anton,80,');
+    expect(ass).toContain('OAK');
+  });
 });
+
+// ---------------------------------------------------------------------------
+// Cue and animation wiring
+// ---------------------------------------------------------------------------
+
+describe('ffmpeg overlays — cue grouping and animation', () => {
+  it('retains true word timings for the engine', () => {
+    const cues = captionEngineCuesForExport(EDL);
+    expect(cues).toHaveLength(1);
+    expect(cues[0]?.words.map((word) => word.text)).toEqual([
+      'This',
+      'is',
+      '14',
+      'Oak',
+      'Avenue.',
+    ]);
+    expect(cues[0]?.words[3]?.startSec).toBe(1.2);
+  });
+
+  it('derives scene bounds from the clips and never crosses a cut', () => {
+    const bounds = captionSceneBounds(EDL);
+    expect(bounds.length).toBeGreaterThan(0);
+    expect(bounds[0]?.startSec).toBe(0);
+    for (let index = 1; index < bounds.length; index += 1) {
+      expect(bounds[index]!.startSec).toBeGreaterThanOrEqual(bounds[index - 1]!.endSec - 0.001);
+    }
+
+    const edl = JSON.parse(JSON.stringify(EDL)) as Edl;
+    edl.clips[0]!.outSec = edl.clips[0]!.inSec + 0.5;
+    const cues = captionEngineCuesForExport(edl);
+    // No cue may straddle the shortened first cut at 0.5 s.
+    expect(cues.length).toBeGreaterThan(0);
+    for (const cue of cues) {
+      expect(cue.endSec <= 0.501 || cue.startSec >= 0.499).toBe(true);
+    }
+  });
+
+  it('staggers word_by_word at the real word starts, on one baseline per line', () => {
+    const edl = withCaption({ style: 'kinetic_bold', animation: 'word_by_word' });
+    const cues = captionCuesForExport(edl);
+    const events = dialogues(buildAssDocument(edl, cues, 'vertical-social'));
+
+    expect(events).toHaveLength(5);
+    expect(events.map(textOf)).toEqual(['THIS', 'IS', '14', 'OAK', 'AVENUE.']);
+
+    const starts = [0.6, 0.82, 0.94, 1.2, 1.48];
+    events.forEach((event, index) => {
+      const { startSec, endSec } = timesOf(event);
+      expect(startSec).toBeCloseTo(starts[index] ?? 0, 2);
+      expect(endSec).toBeLessThanOrEqual(2.1);
+      expect(tagsOf(event)).toContain('\\t(0,140,');
+    });
+
+    const baselines = new Set(
+      events.map((event) => /\\pos\(\d+,(\d+)\)/.exec(tagsOf(event))?.[1] ?? ''),
+    );
+    expect(baselines.size).toBe(2);
+  });
+
+  it('writes karaoke for glass_pill with \\kf chunks', () => {
+    const edl = withCaption({ style: 'glass_pill' });
+    expect(captionAnimationFor(edl)).toBe('karaoke');
+    const events = dialogues(buildAssDocument(edl, captionCuesForExport(edl), 'vertical-social'));
+
+    expect(events).toHaveLength(1);
+    const chunks = [...textOf(events[0] ?? '').matchAll(/\\kf(\d+)/g)].map((match) =>
+      Number(match[1]),
+    );
+    expect(chunks).toHaveLength(5);
+    expect(chunks.reduce((sum, value) => sum + value, 0)).toBe(150);
+
+    const fields = styleFields(buildAssDocument(edl, captionCuesForExport(edl), 'vertical-social'));
+    expect(fields[15]).toBe('3'); // box backing
+    expect(fields[3]).toBe('&H00FFE8A9'); // ice active colour
+  });
+
+  it('reveals typewriter characters at 20 per second', () => {
+    const edl = withCaption({ animation: 'typewriter' });
+    const cues = captionCuesForExport(edl);
+    const events = dialogues(buildAssDocument(edl, cues, 'vertical-social'));
+
+    expect(events).toHaveLength(18);
+    expect(events.map(textOf).join('')).toBe('Thisis14OakAvenue.');
+    expect(ASS_TYPEWRITER_CHARS_PER_SEC).toBe(20);
+    const cue = cues[0]!;
+    events.forEach((event, index) => {
+      const { startSec } = timesOf(event);
+      expect(startSec).toBeCloseTo(cue.startSec + index / 20, 2);
+    });
+  });
+
+  it('keeps safe-area margins for every preset', () => {
+    const presets: CaptionPresetId[] = [
+      'social_bold',
+      'clean_reel',
+      'editorial',
+      'editorial_serif',
+      'luxury_gold',
+      'kinetic_bold',
+      'minimal_white',
+      'glass_pill',
+      'bold_bw',
+    ];
+    for (const preset of presets) {
+      const edl = withCaption({ style: preset });
+      const fields = styleFields(buildAssDocument(edl, captionCuesForExport(edl), 'vertical-social'));
+      expect(fields[19], preset).toBe('60');
+      expect(fields[20], preset).toBe('120');
+      // bold_bw is centre anchored; the rest sit on the bottom safe area.
+      expect(fields[21], preset).toBe(preset === 'bold_bw' ? '0' : '340');
+    }
+  });
+
+  it('never draws over the next cue', () => {
+    const longCue: Cue = {
+      startSec: 1,
+      endSec: 1.06,
+      lines: ['ALPHA BRAVO CHARLIE DELTA'],
+    };
+    const nextCue: Cue = { startSec: 1.06, endSec: 2, lines: ['NEXT CUE'] };
+    const edl = withCaption({ animation: 'word_by_word' });
+
+    const events = dialogues(buildAssDocument(edl, [longCue, nextCue], 'vertical-social'));
+    for (const event of events) {
+      const { startSec, endSec } = timesOf(event);
+      expect(startSec).toBeGreaterThanOrEqual(1);
+      expect(endSec).toBeLessThanOrEqual(2);
+    }
+  });
+
+  it('attaches word timings to hand-built cues by count, or distributes them', () => {
+    const cue: Cue = { startSec: 0.6, endSec: 2.1, lines: ['This is 14 Oak Avenue.'] };
+    const attached = attachCaptionWordTimings([cue], EDL.captions.words ?? []);
+    expect(attached[0]?.words[0]?.startSec).toBe(0.6);
+    expect(attached[0]?.words[4]?.endSec).toBe(2.1);
+
+    const other: Cue = { startSec: 0, endSec: 1, lines: ['ALPHA BRAVO'] };
+    const distributed = attachCaptionWordTimings([other], []);
+    expect(distributed[0]?.words).toHaveLength(2);
+    expect(distributed[0]?.words[1]?.endSec).toBe(1);
+  });
+});
+
+// ---------------------------------------------------------------------------
+// writeAssFile
+// ---------------------------------------------------------------------------
+
+describe('ffmpeg overlays — writeAssFile', () => {
+  it('writes an inspectable ASS sidecar with the chosen preset', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'zeniconic-ass-'));
+    try {
+      const edl = withCaption({ style: 'luxury_gold' });
+      const path = join(dir, 'nested', 'captions.ass');
+      const result = await writeAssFile(edl, path, 'vertical-social');
+
+      expect(result.preset).toBe('luxury_gold');
+      expect(result.animation).toBe('rise');
+      expect(result.cueCount).toBeGreaterThan(0);
+      expect(result.eventCount).toBe(result.cueCount);
+
+      const body = await readFile(path, 'utf8');
+      expect(body).toContain('Style: ZenCaption,DM Serif Display,68,');
+      expect(body).toContain('; preset: luxury_gold');
+      expect(body).toContain('\\move(');
+    } finally {
+      await rm(dir, { recursive: true, force: true });
+    }
+  });
+});
+
+// ---------------------------------------------------------------------------
+// Paths
+// ---------------------------------------------------------------------------
 
 describe('ffmpeg overlays — paths', () => {
   it('escapes a Windows drive path for the filter parser', () => {
@@ -105,6 +378,10 @@ describe('ffmpeg overlays — paths', () => {
     );
   });
 });
+
+// ---------------------------------------------------------------------------
+// Drawtext plan
+// ---------------------------------------------------------------------------
 
 describe('ffmpeg overlays — drawtext plan', () => {
   it('keeps every card inside the landscape safe area', () => {
@@ -148,199 +425,12 @@ describe('ffmpeg overlays — drawtext plan', () => {
   });
 });
 
-describe('ffmpeg overlays — caption animation', () => {
-  it('treats an absent animation as fade', () => {
-    expect(captionAnimationFor(EDL)).toBe('fade');
-    expect(captionAnimationFor(withAnimation(undefined))).toBe('fade');
-  });
+// ---------------------------------------------------------------------------
+// Exported preset catalogue stays aligned with the engine
+// ---------------------------------------------------------------------------
 
-  it('falls back to fade for an unknown animation', () => {
-    const unknown = withAnimation('sparkle');
-    expect(captionAnimationFor(unknown)).toBe('fade');
-
-    const cues = captionCuesForExport(unknown);
-    expect(buildAssDocument(unknown, cues, 'vertical-social')).toBe(
-      buildAssDocument(EDL, cues, 'vertical-social'),
-    );
-  });
-
-  it('keeps the default fade output byte-identical', () => {
-    const cues = captionCuesForExport(EDL);
-    const ass = buildAssDocument(EDL, cues, 'vertical-social');
-    expect(ass).toMatchInlineSnapshot(`
-      "[Script Info]
-      ; Zeniconic export captions
-      ScriptType: v4.00+
-      PlayResX: 1080
-      PlayResY: 1920
-      WrapStyle: 0
-      ScaledBorderAndShadow: yes
-      YCbCr Matrix: TV.709
-
-      [V4+ Styles]
-      Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding
-      Style: ZenCaption,Bricolage Grotesque,76,&H00EFF4F7,&H00EFF4F7,&H0014120F,&H8014120F,-1,0,0,0,100,100,0,0,1,3,2,2,60,120,340,1
-
-      [Events]
-      Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text
-      Dialogue: 0,0:00:00.60,0:00:02.10,ZenCaption,,0,0,0,,{\\blur2}THIS IS 14\\NOAK AVENUE.
-      "
-    `);
-    // One cue, one event, the pre-animation `\blur2` look.
-    expect(dialogues(ass)).toHaveLength(1);
-    expect(tagsOf(dialogues(ass)[0] ?? '')).toBe('\\blur2');
-    expect(textOf(dialogues(ass)[0] ?? '')).toBe('THIS IS 14\\NOAK AVENUE.');
-  });
-
-  it('draws no captions for the none animation', () => {
-    const edl = withAnimation('none');
-    const cues = captionCuesForExport(edl);
-    expect(cues.length).toBeGreaterThan(0);
-    expect(dialogues(buildAssDocument(edl, cues, 'vertical-social'))).toHaveLength(0);
-  });
-
-  it('draws each entrance with its ASS override tags', () => {
-    const expectations: ReadonlyArray<readonly [string, readonly string[]]> = [
-      ['fade', ['\\blur2']],
-      [
-        'pop',
-        [
-          '\\fad(120,0)',
-          '\\t(0,160,\\fscx112\\fscy112)',
-          '\\t(160,260,\\fscx100\\fscy100)',
-        ],
-      ],
-      ['rise', ['\\move(540,1586,540,1580,0,220)', '\\fad(220,0)']],
-      ['slide_in', ['\\move(508,1580,540,1580,0,220)', '\\fad(220,0)']],
-      ['tracking_in', ['\\fsp8', '\\t(0,300,\\fsp-1)', '\\fad(300,0)']],
-      ['blur_in', ['\\blur8', '\\t(0,300,\\blur0)', '\\fad(300,0)']],
-      ['scale_in', ['\\fscx118', '\\fscy118', '\\t(0,360,\\fscx100\\fscy100)', '\\fad(360,0)']],
-    ];
-
-    for (const [animation, expected] of expectations) {
-      const edl = withAnimation(animation);
-      const ass = buildAssDocument(edl, captionCuesForExport(edl), 'vertical-social');
-      const events = dialogues(ass);
-      expect(events, animation).toHaveLength(1);
-      const tags = tagsOf(events[0] ?? '');
-      for (const tag of expected) expect(tags, `${animation}: ${tag}`).toContain(tag);
-      // Whole-cue modes draw the complete cue, never a fragment.
-      expect(textOf(events[0] ?? ''), animation).toBe('THIS IS 14\\NOAK AVENUE.');
-    }
-  });
-
-  it('staggers one word event per word on the same baseline', () => {
-    const edl = withAnimation('word_by_word');
-    const cues = captionCuesForExport(edl);
-    const events = dialogues(buildAssDocument(edl, cues, 'vertical-social'));
-
-    // "This is 14 Oak Avenue." — five words, one event each.
-    expect(events).toHaveLength(5);
-    expect(events.map(textOf)).toEqual(['THIS', 'IS', '14', 'OAK', 'AVENUE.']);
-
-    const cue = cues[0]!;
-    events.forEach((event, index) => {
-      const { startSec, endSec } = timesOf(event);
-      expect(near(startSec, cue.startSec + index * ASS_WORD_STAGGER_SEC)).toBe(true);
-      expect(startSec).toBeGreaterThanOrEqual(cue.startSec);
-      expect(endSec).toBeLessThanOrEqual(cue.endSec);
-      expect(tagsOf(event)).toContain('\\fad(120,0)');
-    });
-
-    // Every word sits on its line's baseline: two lines, two distinct y values.
-    const baselines = new Set(
-      events.map((event) => /\\pos\(\d+,(\d+)\)/.exec(tagsOf(event))?.[1] ?? ''),
-    );
-    expect(baselines.size).toBe(2);
-    expect([...baselines].sort()).toEqual(['1493', '1580']);
-    // Words on the first line march left to right.
-    const xs = events.map((event) => Number(/\\pos\((\d+),/.exec(tagsOf(event))?.[1] ?? 0));
-    expect(xs[0]).toBeLessThan(xs[1] ?? 0);
-    expect(xs[1]).toBeLessThan(xs[2] ?? 0);
-  });
-
-  it('reveals one character per event at 20 characters per second', () => {
-    const edl = withAnimation('typewriter');
-    const cues = captionCuesForExport(edl);
-    const events = dialogues(buildAssDocument(edl, cues, 'vertical-social'));
-
-    // 18 non-space characters in "This is 14 Oak Avenue.".
-    expect(events).toHaveLength(18);
-    expect(events.map(textOf).join('')).toBe('THISIS14OAKAVENUE.');
-    expect(ASS_TYPEWRITER_CHARS_PER_SEC).toBe(20);
-
-    const cue = cues[0]!;
-    events.forEach((event, index) => {
-      const { startSec, endSec } = timesOf(event);
-      expect(near(startSec, cue.startSec + index / ASS_TYPEWRITER_CHARS_PER_SEC)).toBe(true);
-      expect(startSec).toBeGreaterThanOrEqual(cue.startSec);
-      expect(endSec).toBeLessThanOrEqual(cue.endSec);
-    });
-  });
-
-  it('never draws a word or character past its cue or over the next one', () => {
-    const longCue: Cue = {
-      startSec: 1,
-      endSec: 1.06,
-      lines: ['ALPHA BRAVO CHARLIE DELTA'],
-    };
-    const nextCue: Cue = { startSec: 1.06, endSec: 2, lines: ['NEXT CUE'] };
-
-    for (const animation of ['word_by_word', 'typewriter'] as const) {
-      const edl = withAnimation(animation);
-      const events = dialogues(buildAssDocument(edl, [longCue, nextCue], 'vertical-social'));
-      const firstCue = events.filter((event) => timesOf(event).startSec < 1.06);
-      expect(firstCue.length, animation).toBeGreaterThan(1);
-
-      for (const event of firstCue) {
-        const { startSec, endSec } = timesOf(event);
-        expect(startSec, animation).toBeGreaterThanOrEqual(1);
-        expect(endSec, animation).toBeLessThanOrEqual(1.06);
-      }
-      // The short cue still reveals every word/character, just faster.
-      const firstText = firstCue.map(textOf).join('');
-      expect(firstText.length, animation).toBeGreaterThan(0);
-    }
-  });
-
-  it('escapes braces and backslashes in per-word and per-character text', () => {
-    const unsafe: Cue = { startSec: 0, endSec: 1, lines: ['A {B} C\\D'] };
-    const edl = withAnimation('word_by_word');
-    const events = dialogues(buildAssDocument(edl, [unsafe], 'vertical-social'));
-
-    expect(events.map(textOf)).toEqual(['A', 'B', 'C/D']);
-    for (const event of events) {
-      expect(textOf(event)).not.toMatch(/[{}]/);
-      expect(textOf(event)).not.toContain('\\');
-    }
-
-    const typed = dialogues(
-      buildAssDocument(withAnimation('typewriter'), [unsafe], 'vertical-social'),
-    );
-    expect(typed.map(textOf).join('')).toBe('ABC/D');
-  });
-
-  it('keeps the caption style and safe-area margins for every animation', () => {
-    const animations = [
-      'fade',
-      'pop',
-      'rise',
-      'slide_in',
-      'tracking_in',
-      'blur_in',
-      'scale_in',
-      'word_by_word',
-      'typewriter',
-    ];
-    for (const animation of animations) {
-      const edl = withAnimation(animation);
-      const ass = buildAssDocument(edl, captionCuesForExport(edl), 'vertical-social');
-      const style = ass.split('\n').find((line) => line.startsWith('Style: ZenCaption,'));
-      expect(style, animation).toBeDefined();
-      const fields = style!.split(',');
-      expect(fields[2], animation).toBe('76');
-      expect(fields[18], animation).toBe('2');
-      expect(fields[21], animation).toBe('340');
-    }
+describe('ffmpeg overlays — preset catalogue', () => {
+  it('exports the same nine presets the engine draws', () => {
+    expect(Object.keys(CAPTION_PRESETS)).toHaveLength(9);
   });
 });

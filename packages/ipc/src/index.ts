@@ -14,6 +14,7 @@ export type {
   AgentRunResponse,
   Autonomy,
   CaptionMode,
+  CaptionStyleId,
   Channel,
   ChatApplyRequest,
   ChatApplyResult,

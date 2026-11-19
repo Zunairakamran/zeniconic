@@ -16,14 +16,58 @@
 
 import { spawn } from 'node:child_process';
 import { mkdir, writeFile } from 'node:fs/promises';
-import { join } from 'node:path';
-import { toCues, toSrt } from '../../packages/captions/src/index';
+import { dirname, join } from 'node:path';
+import { toSrt } from '../../packages/captions/src/index';
 import type { Cue } from '../../packages/captions/src/index';
-import type { CaptionWord, Edl, TextAnimation } from '../../packages/edl/src/index';
+import type { CaptionWord, Edl } from '../../packages/edl/src/index';
 import { ffmpegPath, probe } from '../../packages/media/src/index';
 import { PROFILES } from '../../packages/render/src/index';
 import type { ProfileId, Quality } from '../../packages/render/src/index';
+import {
+  ASS_BLUR_START_PX,
+  ASS_FADE_IN_MS,
+  ASS_POP_OVERSHOOT,
+  ASS_POP_START,
+  ASS_RISE_PX,
+  ASS_SCALE_IN_START,
+  ASS_SLIDE_PX,
+  ASS_TRACKING_START_PX,
+  ASS_TYPEWRITER_CHARS_PER_SEC,
+  ASS_WORD_STAGGER_SEC,
+  buildCaptionAss,
+  distributeWordTimings,
+  groupCaptionCues,
+  normalizeCaptionAnimation,
+  resolveCaptionStyle,
+} from './caption-engine';
+import type {
+  CaptionCue,
+  CaptionEngineAnimation,
+  CaptionPresetId,
+  CaptionSceneBound,
+  ResolvedCaptionStyle,
+} from './caption-engine';
 import { defaultCanvas } from './service';
+
+export {
+  ASS_BLUR_START_PX,
+  ASS_FADE_IN_MS,
+  ASS_POP_OVERSHOOT,
+  ASS_POP_START,
+  ASS_RISE_PX,
+  ASS_SCALE_IN_START,
+  ASS_SLIDE_PX,
+  ASS_TRACKING_START_PX,
+  ASS_TYPEWRITER_CHARS_PER_SEC,
+  ASS_WORD_STAGGER_SEC,
+};
+export type {
+  CaptionCue,
+  CaptionEngineAnimation,
+  CaptionPresetId,
+  CaptionSceneBound,
+};
+
 
 /** Paper, ink and brass from docs/design/tokens.css, as drawtext colours. */
 const PAPER = '0xF7F4EF';
@@ -103,6 +147,10 @@ export interface OverlayRenderResult {
   cueCount: number;
   /** The drawtext layers that were drawn, in paint order. */
   textLayers: string[];
+  /** The caption animation actually baked into the ASS. */
+  animation?: CaptionEngineAnimation;
+  /** The preset actually baked into the ASS style. */
+  preset?: CaptionPresetId;
 }
 
 // ---------------------------------------------------------------------------
@@ -153,403 +201,239 @@ function round3(value: number): number {
 
 /** Collects the exported caption words from the EDL, in seconds. */
 export function captionCuesForExport(edl: Edl, limitSec?: number): Cue[] {
+  return captionEngineCuesForExport(edl, limitSec).map((cue) => ({
+    startSec: cue.startSec,
+    endSec: cue.endSec,
+    lines: cue.lines,
+  }));
+}
+
+/**
+ * Clip boundaries on the timeline: the scene bounds the cue builder uses so no
+ * caption is ever drawn across a cut. `speedRamp` clips integrate their ramp;
+ * a plain clip is `(out - in) / speed`, the same rule the renderer uses.
+ */
+export function captionSceneBounds(edl: Edl, limitSec?: number): CaptionSceneBound[] {
+  const total = Math.max(0, limitSec ?? edl.format.targetDurationSec);
+  const bounds: CaptionSceneBound[] = [];
+  let cursor = 0;
+
+  for (const clip of edl.clips) {
+    const span = Math.max(0, clip.outSec - clip.inSec);
+    if (span <= 0) continue;
+
+    let duration: number;
+    if (clip.speedRamp !== undefined && clip.speedRamp.length >= 2) {
+      duration = 0;
+      for (let index = 1; index < clip.speedRamp.length; index += 1) {
+        const previous = clip.speedRamp[index - 1];
+        const point = clip.speedRamp[index];
+        if (previous === undefined || point === undefined) continue;
+        const dt = Math.max(0, point.t - previous.t);
+        const speed = Math.max(0.01, (previous.speed + point.speed) / 2);
+        duration += (dt * span) / speed;
+      }
+    } else {
+      duration = span / Math.max(0.01, clip.speed);
+    }
+    if (!Number.isFinite(duration) || duration <= 0) continue;
+
+    const startSec = round3(Math.max(0, Math.min(total, cursor)));
+    const endSec = round3(Math.max(0, Math.min(total, cursor + duration)));
+    if (endSec > startSec) bounds.push({ startSec, endSec, id: clip.id });
+    cursor += duration;
+  }
+
+  if (bounds.length === 0) return [{ startSec: 0, endSec: total }];
+
+  // Caption words can outlive the last cut (a voiceover tail); the last scene
+  // keeps them rather than dropping the closing line.
+  const last = bounds[bounds.length - 1];
+  if (last !== undefined && last.endSec < total) last.endSec = total;
+  return bounds;
+}
+
+/**
+ * Lays the EDL's word timings out with the caption engine: preset-specific
+ * line budgets, gap and scene rules, and true word spans retained for karaoke.
+ */
+export function captionEngineCuesForExport(edl: Edl, limitSec?: number): CaptionCue[] {
   const words: CaptionWord[] = edl.captions.words ?? [];
   if (words.length === 0) return [];
 
-  const cues = toCues(words, {
-    maxCharsPerLine: CAPTION_MAX_CHARS,
-    maxLines: CAPTION_MAX_LINES,
+  const style = captionStyleForEdl(edl);
+  const total = Math.max(0, limitSec ?? edl.format.targetDurationSec);
+
+  return groupCaptionCues(words, {
+    maxCharsPerLine: style.maxCharsPerLine,
+    maxLines: style.maxLines,
+    ...(edl.captions.maxWordsPerLine === undefined
+      ? {}
+      : { maxWordsPerLine: edl.captions.maxWordsPerLine }),
     language: edl.captions.language ?? 'en-GB',
+    bounds: { startSec: 0, endSec: total },
+    sceneBounds: captionSceneBounds(edl, total),
+  }).filter(
+    (cue) =>
+      cue.endSec > cue.startSec && cue.lines.some((line) => line.trim().length > 0),
+  );
+}
+
+/** The EDL's style string plus every additive v2 caption override. */
+export function captionStyleForEdl(edl: Edl): ResolvedCaptionStyle {
+  return resolveCaptionStyle(edl.captions.style, {
+    ...(edl.captions.font === undefined ? {} : { font: edl.captions.font }),
+    ...(edl.captions.box === undefined ? {} : { box: edl.captions.box }),
+    ...(edl.captions.position === undefined ? {} : { position: edl.captions.position }),
+    ...(edl.captions.highlight === undefined ? {} : { highlight: edl.captions.highlight }),
+    ...(edl.captions.animation === undefined ? {} : { animation: edl.captions.animation }),
+    ...(edl.captions.maxLines === undefined ? {} : { maxLines: edl.captions.maxLines }),
+    ...(edl.captions.maxWordsPerLine === undefined
+      ? {}
+      : { maxWordsPerLine: edl.captions.maxWordsPerLine }),
   });
-
-  const total = limitSec ?? edl.format.targetDurationSec;
-  return cues
-    .map((cue) => ({
-      ...cue,
-      startSec: round3(Math.max(0, cue.startSec)),
-      endSec: round3(Math.min(total, cue.endSec)),
-    }))
-    .filter((cue) => cue.endSec > cue.startSec && cue.lines.some((line) => line.trim().length > 0));
-}
-
-function assTime(seconds: number): string {
-  const cs = Math.max(0, Math.round(seconds * 100));
-  const hours = Math.floor(cs / 360000);
-  const minutes = Math.floor((cs % 360000) / 6000);
-  const secs = Math.floor((cs % 6000) / 100);
-  const centis = cs % 100;
-  return `${hours}:${String(minutes).padStart(2, '0')}:${String(secs).padStart(2, '0')}.${String(centis).padStart(2, '0')}`;
-}
-
-function assText(text: string): string {
-  // Braces open override tags; backslashes start escapes. Caption copy never
-  // needs either, so strip them rather than let one word restyle a cue.
-  return text.replace(/[{}]/g, '').replace(/\\/g, '/').replace(/\r?\n/g, '\\N');
-}
-
-// ---------------------------------------------------------------------------
-// Caption animation (the EDL's `captions.animation`, drawn with ASS overrides)
-// ---------------------------------------------------------------------------
-
-/**
- * The caption animations this path draws. `word_stagger` is not an EDL value;
- * anything outside this set (a hand-edited typo, `undefined`) becomes `fade`.
- *
- * Which modes are exact, and which are approximations:
- *
- * | animation      | ASS tags                                     | fidelity |
- * |----------------|----------------------------------------------|----------|
- * | `none`         | no dialogue at all                           | exact |
- * | `fade`         | `\blur2` (the pre-animation look)            | exact |
- * | `pop`          | `\fad` + two `\t` scale steps                 | close: two-step overshoot, not an eased arc |
- * | `rise`         | `\move` up 6 px + `\fad`                      | exact (linear move; no ease-out curve) |
- * | `slide_in`     | `\move` in 32 px from the left + `\fad`       | exact (linear move) |
- * | `tracking_in`  | `\fsp 8` → `\t(0,300,\fsp-1)` + `\fad`        | approximation: libass interpolates spacing linearly per glyph, so the text reflows |
- * | `blur_in`      | `\blur8` → `\t(0,300,\blur0)` + `\fad`        | approximation: libass has no eased blur, only the `\t` ramp |
- * | `scale_in`     | `\fscx118\fscy118` → `\t(0,360,…100)` + `\fad` | exact (one linear scale ramp) |
- * | `word_by_word` | one dialogue per word, `\an1\pos` + `\fad`    | approximation: glyph advances are estimated, so word spacing is uniform rather than Bricolage's true metrics |
- * | `typewriter`   | one dialogue per character at 20 chars/s      | approximation: same advance estimate; characters appear rather than the line growing from a fixed layout |
- *
- * ASS cannot measure a font, so the per-word/per-character x positions come
- * from `glyphEm`, a deterministic advance table. All words of a cue share the
- * table, so they never overlap; only the line's overall width differs slightly
- * from libass's own centring.
- */
-const ASS_CAPTION_ANIMATIONS: ReadonlySet<string> = new Set<string>([
-  'none',
-  'fade',
-  'rise',
-  'slide_in',
-  'pop',
-  'typewriter',
-  'word_by_word',
-  'tracking_in',
-  'blur_in',
-  'scale_in',
-]);
-
-/** Fade-in for the animated entrances; libass `\fad` takes milliseconds. */
-export const ASS_FADE_IN_MS = 120;
-/** Gap between `word_by_word` events inside one cue. */
-export const ASS_WORD_STAGGER_SEC = 0.05;
-/** `typewriter` reveal rate, characters per second. */
-export const ASS_TYPEWRITER_CHARS_PER_SEC = 20;
-/** Pixels `rise` travels up into place. */
-export const ASS_RISE_PX = 6;
-/** Pixels `slide_in` travels in from the safe edge. */
-export const ASS_SLIDE_PX = 32;
-/** `\fsp` the tracking entrance starts at, settling on `\fsp-1`. */
-export const ASS_TRACKING_START = 8;
-export const ASS_TRACKING_REST = -1;
-/** `\blur` the blur entrance starts at. */
-export const ASS_BLUR_START = 8;
-/** `\fscx`/`\fscy` percentage the scale entrance starts at. */
-export const ASS_SCALE_IN_START = 118;
-
-/**
- * The EDL's caption animation, normalised: unknown or absent is `fade`, which
- * is what the ASS path drew before animations existed.
- */
-export function captionAnimationFor(edl: Edl): TextAnimation {
-  const value: unknown = edl.captions.animation;
-  return typeof value === 'string' && ASS_CAPTION_ANIMATIONS.has(value)
-    ? (value as TextAnimation)
-    : 'fade';
-}
-
-/** The ASS script geometry the cue builder draws with, in canvas pixels. */
-interface AssFrame {
-  width: number;
-  height: number;
-  fontSize: number;
-  marginV: number;
-  marginL: number;
-  marginR: number;
-}
-
-interface AssEvent {
-  startSec: number;
-  endSec: number;
-  /** Override block without braces. */
-  tags: string;
-  /** Escaped, uppercase text as drawn. */
-  text: string;
-}
-
-interface PlacedWord {
-  text: string;
-  /** Canvas x of the word's left edge. */
-  x: number;
-}
-
-interface PlacedChar {
-  text: string;
-  x: number;
-}
-
-interface PlacedLine {
-  /** Canvas y of the line's bottom edge. */
-  bottom: number;
-  words: PlacedWord[];
-  chars: PlacedChar[];
-}
-
-/** Advance widths in em, for the placement estimate only. */
-function glyphEm(character: string): number {
-  if (character === ' ') return 0.3;
-  if (/[.,;:!?'"’”“-]/.test(character)) return 0.28;
-  if (/[0-9]/.test(character)) return 0.58;
-  if (/[A-Z]/.test(character)) return 0.66;
-  return 0.58;
-}
-
-function measureEm(text: string): number {
-  let total = 0;
-  for (const character of text) total += glyphEm(character);
-  return total;
 }
 
 /**
- * Places one laid-out line. Words and characters are positioned from the same
- * advance table, so a per-word event lands where the word sits in the whole
- * line and the line never jumps when the animation settles.
+ * The animation actually drawn. An explicit EDL value wins; otherwise the
+ * chosen preset's motion applies, so `luxury_gold` really does rise and
+ * `kinetic_bold` really does reveal word by word even without an explicit
+ * `captions.animation`.
  */
-function placeLine(
-  text: string,
-  lineIndex: number,
-  lineCount: number,
-  frame: AssFrame,
-): PlacedLine {
-  const width = measureEm(text) * frame.fontSize;
-  const centred = (frame.width - width) / 2;
-  const left = Math.min(
-    Math.max(frame.marginL, centred),
-    Math.max(frame.marginL, frame.width - frame.marginR - width),
+export function captionAnimationFor(edl: Edl): CaptionEngineAnimation {
+  return normalizeCaptionAnimation(
+    edl.captions.animation,
+    captionStyleForEdl(edl).animation,
   );
-  const bottom =
-    frame.height -
-    frame.marginV -
-    (lineCount - 1 - lineIndex) * Math.round(frame.fontSize * CAPTION_LINE_HEIGHT);
+}
 
-  const words: PlacedWord[] = [];
-  const chars: PlacedChar[] = [];
-  let cursorEm = 0;
-  let wordEm = 0;
-  let wordText = '';
 
-  const flushWord = (): void => {
-    if (wordText.length > 0) {
-      words.push({ text: wordText, x: left + wordEm * frame.fontSize });
-      wordText = '';
+// ASS generation lives in services/pipeline/caption-engine.ts.
+// The helpers below keep the old call sites and the QA scripts working.
+
+/**
+ * Attaches word spans to hand-built cues. When the cue's tokens line up with
+ * the EDL words inside its window, their real timings are used; otherwise the
+ * cue duration is shared across tokens by character length. This is what lets
+ * `buildAssDocument(edl, cues, profile)` stay source-compatible while still
+ * drawing real karaoke.
+ */
+export function attachCaptionWordTimings(
+  cues: readonly Cue[],
+  words: readonly CaptionWord[],
+): CaptionCue[] {
+  return cues.map((cue) => {
+    const tokens = cue.lines
+      .join(' ')
+      .split(/\s+/)
+      .map((token) => token.trim())
+      .filter((token) => token.length > 0);
+
+    if (tokens.length === 0) {
+      return { startSec: cue.startSec, endSec: cue.endSec, lines: cue.lines, words: [] };
     }
-  };
 
-  for (const character of text) {
-    if (character === ' ') {
-      flushWord();
-      cursorEm += glyphEm(character);
-      wordEm = cursorEm;
-      continue;
+    const inside = words.filter(
+      (word) =>
+        word.startSec >= cue.startSec - 0.001 && word.startSec < cue.endSec + 0.001,
+    );
+
+    if (inside.length === tokens.length) {
+      return {
+        startSec: cue.startSec,
+        endSec: cue.endSec,
+        lines: cue.lines,
+        words: inside.map((word, index) => ({
+          text: tokens[index] ?? word.text,
+          startSec: Math.min(Math.max(word.startSec, cue.startSec), cue.endSec),
+          endSec: Math.min(Math.max(word.endSec, cue.startSec), cue.endSec),
+        })),
+      };
     }
-    if (wordText.length === 0) wordEm = cursorEm;
-    wordText += character;
-    chars.push({ text: character, x: left + cursorEm * frame.fontSize });
-    cursorEm += glyphEm(character);
-  }
-  flushWord();
 
-  return { bottom, words, chars };
-}
-
-function assPx(value: number): string {
-  return String(Math.max(0, Math.round(value)));
-}
-
-/**
- * The override block for a whole-cue entrance. `fade` is deliberately the
- * exact string the path drew before animations existed, so a default EDL
- * renders byte-identically.
- */
-function entranceTags(animation: TextAnimation, frame: AssFrame): string {
-  const centreX = frame.width / 2;
-  const baseY = frame.height - frame.marginV;
-
-  switch (animation) {
-    case 'pop':
-      return `\\blur2\\fad(${String(ASS_FADE_IN_MS)},0)\\t(0,160,\\fscx112\\fscy112)\\t(160,260,\\fscx100\\fscy100)`;
-    case 'rise':
-      return `\\blur2\\fad(220,0)\\move(${assPx(centreX)},${assPx(baseY + ASS_RISE_PX)},${assPx(centreX)},${assPx(baseY)},0,220)`;
-    case 'slide_in':
-      return `\\blur2\\fad(220,0)\\move(${assPx(centreX - ASS_SLIDE_PX)},${assPx(baseY)},${assPx(centreX)},${assPx(baseY)},0,220)`;
-    case 'tracking_in':
-      return `\\blur2\\fad(300,0)\\fsp${String(ASS_TRACKING_START)}\\t(0,300,\\fsp${String(ASS_TRACKING_REST)})`;
-    case 'blur_in':
-      return `\\fad(300,0)\\blur${String(ASS_BLUR_START)}\\t(0,300,\\blur0)`;
-    case 'scale_in':
-      return `\\blur2\\fad(360,0)\\fscx${String(ASS_SCALE_IN_START)}\\fscy${String(ASS_SCALE_IN_START)}\\t(0,360,\\fscx100\\fscy100)`;
-    default:
-      // `fade` (and any unknown the caller let through) draws the original look.
-      return '\\blur2';
-  }
-}
-
-/**
- * `word_by_word`: one event per word, each holding only its own word, on the
- * line's baseline. The stagger is 50 ms a word unless the cue is too short,
- * in which case it tightens so every word still appears before the cue ends
- * and before the next cue starts.
- */
-function wordEvents(cue: Cue, frame: AssFrame, limitSec: number): AssEvent[] {
-  const lines = cue.lines
-    .map((line) => assText(line.toUpperCase()))
-    .filter((line) => line.trim().length > 0);
-  if (lines.length === 0) return [];
-
-  const placed = lines.map((line, index) => placeLine(line, index, lines.length, frame));
-  const words = placed.flatMap((line) =>
-    line.words.map((word) => ({ ...word, bottom: line.bottom })),
-  );
-  if (words.length === 0) return [];
-
-  const available = limitSec - cue.startSec;
-  if (available <= 0) return [];
-  const step = Math.min(ASS_WORD_STAGGER_SEC, words.length > 1 ? available / words.length : 0);
-
-  return words.map((word, index) => ({
-    startSec: cue.startSec + index * step,
-    endSec: limitSec,
-    tags: `\\an1\\pos(${assPx(word.x)},${assPx(word.bottom)})\\blur2\\fad(${String(ASS_FADE_IN_MS)},0)`,
-    text: word.text,
-  }));
-}
-
-/**
- * `typewriter`: one event per character at 20 chars/s, each character on its
- * line's baseline. Spaces need no event; they only advance the layout. The
- * rate tightens for a short cue so no character is dropped and nothing is
- * drawn past the cue end or over the next cue.
- */
-function typewriterEvents(cue: Cue, frame: AssFrame, limitSec: number): AssEvent[] {
-  const lines = cue.lines
-    .map((line) => assText(line.toUpperCase()))
-    .filter((line) => line.trim().length > 0);
-  if (lines.length === 0) return [];
-
-  const placed = lines.map((line, index) => placeLine(line, index, lines.length, frame));
-  const chars = placed.flatMap((line) =>
-    line.chars.map((char) => ({ ...char, bottom: line.bottom })),
-  );
-  if (chars.length === 0) return [];
-
-  const available = limitSec - cue.startSec;
-  if (available <= 0) return [];
-  const step = Math.min(
-    1 / ASS_TYPEWRITER_CHARS_PER_SEC,
-    chars.length > 1 ? available / chars.length : 0,
-  );
-
-  return chars.map((char, index) => ({
-    startSec: cue.startSec + index * step,
-    endSec: limitSec,
-    tags: `\\an1\\pos(${assPx(char.x)},${assPx(char.bottom)})\\blur2`,
-    text: char.text,
-  }));
-}
-
-/** Every dialogue event for one cue, in paint order. */
-function assEventsForCue(
-  cue: Cue,
-  animation: TextAnimation,
-  frame: AssFrame,
-  limitSec: number,
-): AssEvent[] {
-  if (animation === 'none') return [];
-
-  const text = assText(cue.lines.join('\n').toUpperCase());
-  if (text.trim().length === 0) return [];
-
-  if (animation === 'word_by_word') return wordEvents(cue, frame, limitSec);
-  if (animation === 'typewriter') return typewriterEvents(cue, frame, limitSec);
-
-  return [
-    {
+    return {
       startSec: cue.startSec,
       endSec: cue.endSec,
-      tags: entranceTags(animation, frame),
-      text,
-    },
-  ];
+      lines: cue.lines,
+      words: distributeWordTimings(tokens, cue.startSec, cue.endSec),
+    };
+  });
+}
+
+/**
+ * The full ASS build for an EDL, exposed for tests and QA harnesses. `cues`
+ * may be the legacy display cues; `engineCues` avoids re-attaching timings
+ * when the caller already has them.
+ */
+export function captionAssForEdl(
+  edl: Edl,
+  cues: readonly Cue[],
+  profile: ProfileId,
+  engineCues?: readonly CaptionCue[],
+) {
+  const style = captionStyleForEdl(edl);
+  const attached =
+    engineCues ?? attachCaptionWordTimings(cues, edl.captions.words ?? []);
+  return buildCaptionAss({
+    cues: attached,
+    canvas: defaultCanvas(profile),
+    style,
+    animation: captionAnimationFor(edl),
+    highlight: edl.captions.highlight ?? null,
+  });
 }
 
 /**
  * Builds the ASS document libass burns.
  *
- * Style: Bricolage Grotesque 800, uppercase, centred, 76 px at 1080 wide,
- * 3 px outline, 2 px soft shadow, no plate, bottom margin = safeArea.bottom.
- * The entrance comes from `edl.captions.animation` and is drawn with override
- * tags; `fade` (the default) and hand-edited unknowns keep the original
- * static output. `none` draws no captions at all.
+ * The style, size, weight, colour, backing, alignment, safe-area margins,
+ * spacing and line height all come from the EDL's preset and additive v2
+ * overrides; the animation comes from `captions.animation` or the preset's
+ * motion when that is absent. There is no hardcoded single style any more.
  */
 export function buildAssDocument(
   edl: Edl,
   cues: readonly Cue[],
   profile: ProfileId,
+  engineCues?: readonly CaptionCue[],
 ): string {
-  const canvas = defaultCanvas(profile);
-  const scale = canvas.width / 1080;
-  const size = Math.max(12, Math.round(CAPTION_SIZE_BASE * scale));
-  const marginV = Math.max(0, Math.round(canvas.safeArea.bottom));
-  const marginL = Math.max(0, Math.round(canvas.safeArea.left));
-  const marginR = Math.max(0, Math.round(canvas.safeArea.right));
+  return captionAssForEdl(edl, cues, profile, engineCues).text;
+}
 
-  const lines = [
-    '[Script Info]',
-    '; Zeniconic export captions',
-    'ScriptType: v4.00+',
-    `PlayResX: ${String(canvas.width)}`,
-    `PlayResY: ${String(canvas.height)}`,
-    'WrapStyle: 0',
-    'ScaledBorderAndShadow: yes',
-    'YCbCr Matrix: TV.709',
-    '',
-    '[V4+ Styles]',
-    'Format: Name, Fontname, Fontsize, PrimaryColour, SecondaryColour, OutlineColour, BackColour, Bold, Italic, Underline, StrikeOut, ScaleX, ScaleY, Spacing, Angle, BorderStyle, Outline, Shadow, Alignment, MarginL, MarginR, MarginV, Encoding',
-    // &HAABBGGRR: paper text, ink outline/shadow, 50% shadow alpha, BorderStyle 1
-    // is outline + shadow (no opaque background plate).
-    `Style: ZenCaption,Bricolage Grotesque,${String(size)},&H00EFF4F7,&H00EFF4F7,&H0014120F,&H8014120F,-1,0,0,0,100,100,0,0,1,${String(
-      Math.max(1, Math.round(CAPTION_OUTLINE_BASE * scale)),
-    )},${String(Math.max(0, Math.round(CAPTION_SHADOW_BASE * scale)))},2,${String(marginL)},${String(marginR)},${String(marginV)},1`,
-    '',
-    '[Events]',
-    'Format: Layer, Start, End, Style, Name, MarginL, MarginR, MarginV, Effect, Text',
-  ];
+export interface WriteAssOptions {
+  /** Pre-grouped cues, when the caller already ran `groupCaptionCues`. */
+  cues?: readonly CaptionCue[];
+  limitSec?: number;
+}
 
-  const animation = captionAnimationFor(edl);
-  const frame: AssFrame = {
-    width: canvas.width,
-    height: canvas.height,
-    fontSize: size,
-    marginV,
-    marginL,
-    marginR,
+/**
+ * Writes the ASS sidecar for an EDL. This is the file the `burn`/`both` paths
+ * feed to libass, and the artifact a QA run can inspect without rendering.
+ */
+export async function writeAssFile(
+  edl: Edl,
+  path: string,
+  profile: ProfileId,
+  options: WriteAssOptions = {},
+): Promise<{
+  path: string;
+  cueCount: number;
+  eventCount: number;
+  animation: CaptionEngineAnimation;
+  preset: CaptionPresetId;
+}> {
+  const cues =
+    options.cues ?? captionEngineCuesForExport(edl, options.limitSec);
+  const result = captionAssForEdl(edl, cues, profile, cues);
+  await mkdir(dirname(path), { recursive: true });
+  await writeFile(path, result.text, 'utf8');
+  return {
+    path,
+    cueCount: cues.length,
+    eventCount: result.eventCount,
+    animation: result.animation,
+    preset: result.style.id,
   };
-
-  for (let index = 0; index < cues.length; index += 1) {
-    const cue = cues[index];
-    if (cue === undefined) continue;
-    const next = cues[index + 1];
-    // Word and character events stop at the cue end, which is already the next
-    // cue's start; clamp anyway so a hand-built cue list cannot overlap.
-    const limitSec = Math.min(cue.endSec, next?.startSec ?? cue.endSec);
-
-    for (const event of assEventsForCue(cue, animation, frame, limitSec)) {
-      lines.push(
-        `Dialogue: 0,${assTime(event.startSec)},${assTime(event.endSec)},ZenCaption,,0,0,0,,{${event.tags}}${event.text}`,
-      );
-    }
-  }
-
-  return `${lines.join('\n')}\n`;
 }
 
 // ---------------------------------------------------------------------------
@@ -622,6 +506,16 @@ export function planDrawTexts(input: {
   const total = input.edl.format.targetDurationSec;
   const maxColumn = Math.max(1, width - safeArea.left - safeArea.right);
 
+  // The reserved caption block follows the chosen preset, not the old fixed
+  // 76 px / two-line assumption: a 92 px kinetic cue needs more room and a
+  // centre-anchored preset reserves none at the bottom.
+  const captionStyle = captionStyleForEdl(input.edl);
+  const captionSize = Math.max(12, Math.round(captionStyle.sizeBase * scale));
+  const captionAtBottom = captionStyle.anchor === 'bottom';
+  const captionBlock = captionAtBottom
+    ? Math.round(captionStyle.maxLines * captionSize * captionStyle.lineHeight + 8 * scale)
+    : 0;
+
   const addressOverlay = input.edl.overlays.find((overlay) => overlay.kind === 'address');
   const priceOverlay = input.edl.overlays.find((overlay) => overlay.kind === 'price');
   const lowerThirdOverlay = input.edl.overlays.find((overlay) => overlay.kind === 'lower_third');
@@ -668,13 +562,11 @@ export function planDrawTexts(input: {
     (specText.length > 0 ? specSize : 0);
 
   if (priceBlockHeight > 0 && endWindow.outSec > endWindow.inSec) {
-    const captionSize = Math.max(12, Math.round(CAPTION_SIZE_BASE * scale));
-    const captionBlock = Math.round(
-      CAPTION_MAX_LINES * captionSize * CAPTION_LINE_HEIGHT + 8 * scale,
-    );
-    const overlapsCaptions = input.cues.some(
-      (cue) => cue.startSec < endWindow.outSec && endWindow.inSec < cue.endSec,
-    );
+    const overlapsCaptions =
+      captionAtBottom &&
+      input.cues.some(
+        (cue) => cue.startSec < endWindow.outSec && endWindow.inSec < cue.endSec,
+      );
 
     const bottomEdge = height - safeArea.bottom;
     let priceY = bottomEdge - priceBlockHeight;
@@ -760,10 +652,6 @@ export function planDrawTexts(input: {
     const entranceWindow = windowOf(lowerThirdOverlay, 0.4, Math.min(4.4, total), total);
     if (entranceWindow.outSec > entranceWindow.inSec) {
       const bottomEdge = height - safeArea.bottom;
-      const captionSize = Math.max(12, Math.round(CAPTION_SIZE_BASE * scale));
-      const captionBlock = Math.round(
-        CAPTION_MAX_LINES * captionSize * CAPTION_LINE_HEIGHT + 8 * scale,
-      );
       const preferred = Math.round(height * 0.52);
       const entranceY = clamp(
         preferred,
@@ -950,13 +838,21 @@ export async function renderFfmpegOverlays(
   await mkdir(overlayDir, { recursive: true });
 
   const animation = captionAnimationFor(options.edl);
-  const cues: Cue[] =
-    options.burnCaptions && animation !== 'none' ? captionCuesForExport(options.edl) : [];
+  const engineCues: CaptionCue[] =
+    options.burnCaptions && animation !== 'none'
+      ? captionEngineCuesForExport(options.edl)
+      : [];
+  const cues: Cue[] = engineCues.map((cue) => ({
+    startSec: cue.startSec,
+    endSec: cue.endSec,
+    lines: cue.lines,
+  }));
   let assPath: string | undefined;
 
-  if (cues.length > 0) {
+  if (engineCues.length > 0) {
     assPath = join(overlayDir, `captions-${options.profile}.ass`);
-    await writeFile(assPath, buildAssDocument(options.edl, cues, options.profile), 'utf8');
+    const ass = captionAssForEdl(options.edl, cues, options.profile, engineCues);
+    await writeFile(assPath, ass.text, 'utf8');
   }
 
   const specs = planDrawTexts({
@@ -1031,6 +927,8 @@ export async function renderFfmpegOverlays(
     ...(assPath === undefined ? {} : { assPath }),
     cueCount: cues.length,
     textLayers: specs.map((entry) => entry.id),
+    animation,
+    preset: captionStyleForEdl(options.edl).id,
   };
 }
 

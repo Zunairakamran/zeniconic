@@ -1,6 +1,7 @@
 import { useEffect, useRef, useState, type ComponentType } from 'react';
 import type {
   CaptionMode,
+  CaptionStyleId,
   ExportQuality,
   JobProgressEvent,
   VoiceMode,
@@ -357,6 +358,7 @@ export function App() {
   const exportVideos = async (input: {
     quality: ExportQuality;
     captions: CaptionMode;
+    captionStyle?: CaptionStyleId;
     voice: VoiceMode;
   }): Promise<{ files: string[]; exportDir: string; warnings?: string[] }> => {
     const result = await api.export.start({
@@ -364,6 +366,7 @@ export function App() {
       profiles: selectedProfiles,
       quality: input.quality,
       captions: input.captions,
+      ...(input.captionStyle === undefined ? {} : { captionStyle: input.captionStyle }),
       voice: input.voice,
     });
     setListings((current) =>
