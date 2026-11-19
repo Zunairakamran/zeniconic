@@ -552,7 +552,7 @@ describe('buildRenderArgs', () => {
     expect(new Set(inputs).size).toBe(inputs.length);
   });
 
-  it('burns captions at the EDL safe-area margin', () => {
+  it('burns the caption sidecar without forcing the ASS style', () => {
     const args = buildRenderArgs(cloneExample(), PROFILES['vertical-social'], {
       quality: 'standard',
       output: 'out.mp4',
@@ -561,7 +561,11 @@ describe('buildRenderArgs', () => {
     const graph = graphOf(args);
 
     expect(graph).toContain("subtitles='D\\:/video/captions.srt'");
-    expect(graph).toContain('MarginV=340');
+    // Style, size and safe-area margin live in the ASS the caption engine
+    // wrote. A `force_style` here would override them for every preset.
+    expect(graph).not.toMatch(/force_style/i);
+    expect(graph).not.toContain('MarginV=');
+    expect(graph).not.toContain('FontSize=18');
   });
 });
 

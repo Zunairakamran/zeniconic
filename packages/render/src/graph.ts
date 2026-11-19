@@ -503,20 +503,6 @@ function escapeFilterPath(path: string): string {
   return path.replace(/\\/g, '/').replace(/:/g, '\\:').replace(/'/g, "\\'");
 }
 
-function captionForceStyle(edl: Edl): string {
-  // libass measures MarginV from the bottom edge. The EDL safe area is the one
-  // source of truth, so captions never land under a platform's button bar.
-  const marginV = Math.round(edl.canvas.safeArea.bottom);
-  return [
-    'FontName=Archivo',
-    'FontSize=18',
-    'Outline=0',
-    'Shadow=0',
-    'BorderStyle=1',
-    `MarginV=${marginV}`,
-  ].join(',');
-}
-
 /**
  * Build the complete `-filter_complex` string plus the duration it produces.
  *
@@ -628,7 +614,7 @@ function buildGraphResult(
     // Reusing `[outv]` as both the consumed and produced label is legal: a pad
     // is consumed once and the subtitle filter emits a new one with that name.
     chains.push(
-      `[outv]subtitles='${escapeFilterPath(captionsPath)}':force_style='${captionForceStyle(edl)}'[outv]`,
+      `[outv]subtitles='${escapeFilterPath(captionsPath)}'[outv]`,
     );
   }
 

@@ -71,6 +71,7 @@ export type {
 
 /** Paper, ink and brass from docs/design/tokens.css, as drawtext colours. */
 const PAPER = '0xF7F4EF';
+const BRASS = '0xC8A96B';
 const INK = '0x14120F';
 
 /** The caption contract: Social Bold at 1080 wide. */
@@ -521,6 +522,21 @@ export function planDrawTexts(input: {
   const lowerThirdOverlay = input.edl.overlays.find((overlay) => overlay.kind === 'lower_third');
 
   const addressText = (addressOverlay?.text ?? input.facts?.address ?? '').trim();
+  const captionText = input.cues
+    .map((cue) => cue.lines.join(' '))
+    .join(' ')
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ');
+  const addressWords = addressText
+    .toLowerCase()
+    .replace(/[^a-z0-9\s]/g, ' ')
+    .split(/\s+/)
+    .filter((word) => word.length > 1)
+    .slice(0, 2);
+  const captionsSayAddress =
+    input.edl.format.id === 'marketing_38' &&
+    addressWords.length === 2 &&
+    addressWords.every((word) => captionText.includes(word));
   const priceText = (priceOverlay?.text ?? displayPrice(input.facts)).trim();
   const specText = (priceOverlay?.subtext ?? specRow(input.facts)).trim();
   const entranceText = (lowerThirdOverlay?.text ?? '').trim();
@@ -541,14 +557,14 @@ export function planDrawTexts(input: {
 
   const specs: DrawTextSpec[] = [];
 
-  if (addressText.length > 0 && addressWindow.outSec > addressWindow.inSec) {
+  if (addressText.length > 0 && !captionsSayAddress && addressWindow.outSec > addressWindow.inSec) {
     specs.push({
       id: 'address',
       text: fitText(addressText.toUpperCase(), addressSize, maxColumn),
       ...addressWindow,
       fontSize: addressSize,
-      colour: PAPER,
-      opacity: 0.95,
+      colour: BRASS,
+      opacity: 0.98,
       align: 'left',
       x: safeArea.left,
       y: safeArea.top + Math.round(8 * scale),
@@ -668,6 +684,27 @@ export function planDrawTexts(input: {
         align: 'left',
         x: safeArea.left,
         y: entranceY,
+        shadow: true,
+      });
+    }
+  }
+
+  const ctaOverlay = input.edl.overlays.find((overlay) => overlay.kind === 'cta');
+  const ctaText = (ctaOverlay?.text ?? '').trim();
+  if (ctaText.length > 0) {
+    const ctaWindow = windowOf(ctaOverlay, total - 4.5, total, total);
+    if (ctaWindow.outSec > ctaWindow.inSec) {
+      const ctaSize = Math.max(20, Math.round(54 * scale));
+      specs.push({
+        id: 'cta',
+        text: fitText(ctaText.toUpperCase(), ctaSize, maxColumn),
+        ...ctaWindow,
+        fontSize: ctaSize,
+        colour: PAPER,
+        opacity: 1,
+        align: 'center',
+        x: Math.round(width / 2),
+        y: Math.max(safeArea.top, height - safeArea.bottom - Math.round(96 * scale) - ctaSize),
         shadow: true,
       });
     }

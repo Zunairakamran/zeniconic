@@ -149,6 +149,76 @@ export function beatFixture(): Edl {
   });
 }
 
+/**
+ * The real marketing_38 shot distribution: 6 living, 5 kitchen, 4 bedroom and
+ * 1 entry, grouped by room the way the planner emits them. Durations sum to
+ * 38 s and are ordered so the storyboard template maps them one-to-one; the
+ * 10 clips before the entry run 23.3 s, so the entry retime has to move 0.3 s.
+ * Scores descend inside each room so "best remaining clip of that room" picks
+ * in fixture order.
+ */
+export function marketingDistributionFixture(): Edl {
+  return makeEdl({
+    format: { id: 'marketing_38', label: 'Marketing 38', targetDurationSec: 38 },
+    clips: [
+      { room: 'living', seconds: 2.4, score: 0.9 },
+      { room: 'living', seconds: 2.2, score: 0.88 },
+      { room: 'living', seconds: 2.6, score: 0.86 },
+      { room: 'living', seconds: 2.6, score: 0.84 },
+      { room: 'living', seconds: 2.4, score: 0.82 },
+      { room: 'living', seconds: 2.9, score: 0.8 },
+      { room: 'kitchen', seconds: 2.2, score: 0.86 },
+      { room: 'kitchen', seconds: 2.2, score: 0.84 },
+      { room: 'kitchen', seconds: 2.0, score: 0.82 },
+      { room: 'kitchen', seconds: 2.2, score: 0.8 },
+      { room: 'kitchen', seconds: 2.2, score: 0.78 },
+      { room: 'bedroom', seconds: 2.4, score: 0.84 },
+      { room: 'bedroom', seconds: 2.5, score: 0.82 },
+      { room: 'bedroom', seconds: 2.4, score: 0.8 },
+      { room: 'bedroom', seconds: 2.3, score: 0.78 },
+      { room: 'entry', seconds: 2.5, score: 0.8 },
+    ],
+  });
+}
+
+/** marketing_38 with an existing dissolve between two living-room shots. */
+export function sameRoomDissolveFixture(): Edl {
+  return makeEdl({
+    format: { id: 'marketing_38', label: 'Marketing 38', targetDurationSec: 10 },
+    clips: [
+      { room: 'living', seconds: 2.4, score: 0.9 },
+      {
+        room: 'living',
+        seconds: 2.5,
+        score: 0.85,
+        transitionOut: { type: 'dissolve', durationSec: 0.36 },
+        handleOutSec: 0.36,
+      },
+      { room: 'living', seconds: 2.6, score: 0.8 },
+      { room: 'kitchen', seconds: 2.5, score: 0.8 },
+    ],
+  });
+}
+
+/** marketing_38 with an existing dissolve between living and kitchen. */
+export function crossRoomDissolveFixture(): Edl {
+  return makeEdl({
+    format: { id: 'marketing_38', label: 'Marketing 38', targetDurationSec: 9.9 },
+    clips: [
+      { room: 'living', seconds: 2.4, score: 0.9 },
+      {
+        room: 'living',
+        seconds: 2.5,
+        score: 0.85,
+        transitionOut: { type: 'dissolve', durationSec: 0.36 },
+        handleOutSec: 0.36,
+      },
+      { room: 'kitchen', seconds: 2.5, score: 0.8 },
+      { room: 'bedroom', seconds: 2.5, score: 0.8 },
+    ],
+  });
+}
+
 /** marketing_38 with its price/CTA windows and one existing whip. */
 export function marketingFixture(): Edl {
   return makeEdl({

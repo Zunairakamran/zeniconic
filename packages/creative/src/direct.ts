@@ -9,7 +9,7 @@ import {
   roomOf,
 } from './classify';
 import { snapCutBoundaries } from './beat';
-import { narrativeOrder } from './order';
+import { interleaveByRoom, marketingStoryboard, narrativeOrder } from './order';
 import { assignMotion, chooseEffects, chooseGrade } from './style';
 import { assignTransitions } from './transitions';
 import { clipTimelineSec, roundTime, windowsOf } from './timeline';
@@ -158,6 +158,39 @@ export function direct(input: Edl, options: DirectOptions = {}): DirectResult {
   // -------------------------------------------------------------------------
   let ordered = buildOrder(closeIndex);
 
+  if (options.interleaveRooms === true && ordered.clips.length > 2) {
+    const entries = ordered.clips.map((clip, index) => ({
+      clip,
+      purpose: ordered.purposes[index] ?? 'space',
+      index: ordered.indices[index] ?? index,
+    }));
+    const mixed = interleaveByRoom(entries);
+    ordered = {
+      clips: mixed.map((entry) => entry.clip),
+      purposes: mixed.map((entry) => entry.purpose),
+      indices: mixed.map((entry) => entry.index),
+    };
+  }
+
+  if (options.marketingStoryboard === true && ordered.clips.length > 2) {
+    const entries = ordered.clips.map((clip, index) => ({
+      clip,
+      purpose: ordered.purposes[index] ?? 'space',
+      index: ordered.indices[index] ?? index,
+    }));
+    const mixed = marketingStoryboard(entries);
+    const hookAt = mixed.findIndex((entry) => entry.index === hookIndex);
+    if (hookAt > 0) {
+      const [hook] = mixed.splice(hookAt, 1);
+      if (hook !== undefined) mixed.unshift(hook);
+    }
+    ordered = {
+      clips: mixed.map((entry) => entry.clip),
+      purposes: mixed.map((entry) => entry.purpose),
+      indices: mixed.map((entry) => entry.index),
+    };
+  }
+
   // The closing shot should not repeat the room that plays immediately before
   // it when a reasonable alternative exists. A living→living ending is the
   // common case; a bedroom/view alternative is a better last frame.
@@ -205,6 +238,31 @@ export function direct(input: Edl, options: DirectOptions = {}): DirectResult {
   // -------------------------------------------------------------------------
   // Transitions
   // -------------------------------------------------------------------------
+  if (options.marketingStoryboard === true) {
+    let cursor = 0;
+    const starts: number[] = [];
+    for (const clip of ordered.clips) {
+      starts.push(cursor);
+      cursor += clipTimelineSec(clip);
+    }
+    const entryIndex = ordered.clips.findIndex((clip) => roomOf(clip) === 'entry');
+    const entryStart = entryIndex >= 0 ? starts[entryIndex] : undefined;
+    if (entryIndex > 0 && entryStart !== undefined) {
+      const delta = roundTime(entryStart - 23);
+      const previous = ordered.clips[entryIndex - 1];
+      const entry = ordered.clips[entryIndex];
+      if (
+        previous !== undefined &&
+        entry !== undefined &&
+        Math.abs(delta) > 0.05 &&
+        clipTimelineSec(previous) - delta >= 0.8
+      ) {
+        previous.outSec = roundTime(previous.outSec - delta);
+        entry.outSec = roundTime(entry.outSec + delta);
+      }
+    }
+  }
+
   const priceBoundaries = (Array.isArray(edl.overlays) ? edl.overlays : [])
     .filter((overlay) => overlay.kind === 'price' || overlay.kind === 'cta')
     .map((overlay) => overlay.inSec);

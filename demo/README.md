@@ -1,6 +1,6 @@
 # Zeniconic demo — Marina Gate 1
 
-Built on 2026-11-18 from the 18 presenter clips in `raw-clips/`.
+Built on 2026-11-19 from the 18 presenter clips in `raw-clips/`.
 
 ## What is in this folder
 
@@ -11,6 +11,7 @@ Built on 2026-11-18 from the 18 presenter clips in `raw-clips/`.
 | `cuts/before_marketing38.mp4` | The original 38 s Marketing 38 cut |
 | `cuts/after_marketing38.mp4` | The reworked 38 s campaign cut |
 | `screenshots/before-after-calm.jpg` | Frame-by-frame comparison at 2/6/12/24/28 s |
+| `screenshots/before-after-marketing38.jpg` | 38 s campaign comparison at 2/8/16/24/31/36 s |
 | `screenshots/` | Real Electron UI captured against the demo listing (not the browser demo) |
 | `transcript.json` | Presenter transcription (Scribe v2) with provider cost |
 
@@ -33,8 +34,10 @@ Address: **Marina Gate 1, Dubai Marina**. This is the building/community recorde
 
 Narration used in the exported cuts was generated from those confirmed facts only:
 
-> Marina Gate 1, Dubai Marina. One bedroom. A living entry kitchen bedroom walkthrough.
-> Offered at 1.4 million AED.
+> Marina Gate 1, Dubai Marina. One bedroom. Offered at 1.4 million AED.
+
+Room names are deliberately not narrated: the creative cut does not guarantee a
+bathroom is on screen when the word “bathroom” is spoken.
 
 ## Real evidence
 
@@ -44,7 +47,9 @@ Narration used in the exported cuts was generated from those confirmed facts onl
 | Vision tagging | 21/21 shots, **$0.0099** |
 | Studio voice | **$0.0087** |
 | Calm cut | 30.000 s, 1080×1920, 48 kHz stereo |
-| Marketing 38 | 38.000 s, 1080×1920, 48 kHz stereo |
+| Marketing 38 | 38.000 s, 1080×1920, 48 kHz stereo; entry at 23.0 s, CTA 33.5–38 s, no ghost at 36 s |
+| Real music | Lyria deep house, 112.02 BPM, 119 beats |
+| Review gate | Marketing passes (only the segment-cache informational warning) |
 | Model spend shown by app | **$0.02** |
 
 ## Rebuild

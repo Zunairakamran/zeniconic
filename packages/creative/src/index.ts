@@ -27,7 +27,7 @@ export type {
 
 // Exposed for callers that want to show the decision before rendering.
 export { classifyPurpose, rankHookCandidates, rankCloseCandidates, roomOf } from './classify';
-export { narrativeOrder } from './order';
+export { narrativeOrder, interleaveByRoom, marketingStoryboard } from './order';
 export { assignMotion, chooseGrade, chooseEffects } from './style';
 export { assignTransitions } from './transitions';
 export { snapCutBoundaries } from './beat';

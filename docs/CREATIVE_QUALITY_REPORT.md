@@ -1,5 +1,38 @@
 # Creative quality report — real demo, before and after
 
+## Critical re-review after user playback (2026-11-19)
+
+The user supplied the actual before/after Marketing 38 files. They were right:
+the first "after" was substantially the same edit. The reasons were concrete,
+not vague:
+
+1. **The marketing order was deliberately preserved.** `direct()` used
+   `preserveMarketingStructure: true`, so it kept the beat sheet's living →
+   kitchen → living → kitchen → bedroom sequence and only added a grade. That is
+   why the shot sequence looked unchanged.
+2. **Every marketing caption was forced to 18 px.** `packages/render/src/graph.ts`
+   appended `subtitles=...:force_style='FontName=Archivo,FontSize=18,...'` to the
+   FFmpeg graph. libass obeyed that override over the ASS preset, so even the new
+   typography rendered tiny. The ASS file was correct; the filter graph erased it.
+3. **The 36 s ghost was a same-room dissolve.** The beat sheet put a 0.36 s
+   `dissolve` between two bedroom shots at 35.75 s. Blending two similar rooms
+   produced the double exposure. The director now refuses a same-room dissolve
+   and uses a cut.
+4. **Narration listed rooms that were no longer on screen.** The voice script
+   said “living, entry, kitchen, bathroom” while the creative order showed a
+   bedroom, so “Bathroom.” appeared over a bedroom. Room lists are no longer
+   narrated; captions now carry address, bedroom count and price only.
+5. **The ending had no CTA.** `planDrawTexts` never read the EDL `cta` overlay;
+   the last 4.5 s only had a price card that had already ended. A real
+   `BOOK A VIEWING` drawtext is now emitted in the CTA window.
+
+Fixes in this round: marketing storyboard template (entry lands at 23.0 s),
+interleaved rooms, same-room dissolve veto, style-free `subtitles` filter,
+caption-engine cue grouping inside the marketing pass, 68 px luxury-gold ASS,
+gold address label, CTA card, and address suppression when the caption already
+says it.
+
+
 Date: 2026-11-18. Footage: 18 presenter clips in `raw-clips/`, 576×1024,
 1.5 minutes. Outputs are the real files in `demo/cuts/`.
 
@@ -128,7 +161,7 @@ passes its beat grid into the EDL before cuts are chosen.
 
 ```
 npm run typecheck                         clean
-npx vitest run                            1566 passed, 1 skipped
+npx vitest run                            1586 passed, 1 skipped
 apps/render suite                         76 passed
 node scripts/e2e.mjs                      66/66
 npx tsx scripts/demo-build.ts             real 30 s + 38 s export
@@ -140,31 +173,27 @@ Real demo output:
 | File | Probe |
 |---|---|
 | `demo/cuts/after_calm.mp4` | 30.000 s, 1080×1920, 30 fps, 48 kHz stereo |
-| `demo/cuts/after_marketing38.mp4` | 38.000 s, 1080×1920, 30 fps, 48 kHz stereo |
+| `demo/cuts/after_marketing38.mp4` | 38.000 s, 1080×1920, 30 fps, 48 kHz stereo; CTA at 33.5-38 s; no ghost at 36 s |
 | Delivered audio (Calm) | **-14.4 LUFS**, true peak **-1.7 dBTP** (target -14.0 / -1.5) |
 | Selected music | **112.02 BPM**, 119 beats, Lyria deep house |
 
 The export review passes: no room-order warning, no frozen-frame warning.
-Before/after montage: `demo/screenshots/before-after-calm.jpg`.
+Before/after montages: `demo/screenshots/before-after-calm.jpg` and `demo/screenshots/before-after-marketing38.jpg`.
 
 ## 7. Remaining limitations (honest)
 
-- **Marketing caption layout** still uses the legacy six-words-per-line grid in
-  the single-pass 38 s renderer; it is styled, but not yet as polished as the
-  Calm/ASS path.
-- **Beat snapping is partial.** The beat grid is present, but clips whose
-  `inSec` is 0 cannot be pulled earlier without re-timing; some cuts are near,
-  not exactly on, a beat.
-- **ASS animation easing is linear.** Pop/rise are `\t` ramps, not Remotion
-  spring curves.
-- **No face/object-aware caption placement** yet; safe areas and offsets are
+- **Beat snapping is partial.** The grid is present, but clips whose `inSec`
+  is 0 cannot be pulled earlier without re-timing; some cuts are near, not
+  exactly on, a beat.
+- **ASS animation easing is linear**, not a spring curve.
+- **No face/object-aware caption avoidance** yet; safe areas and offsets are
   respected, but saliency avoidance is not.
 - **The creative director classifies by room and duration**, not full scene
   semantics; shot composition and camera direction are not in the EDL.
-- **No 4K/custom output**, no Kokoro packaged E2E.
-- The full Phase 11 control set is not exposed: export now has caption preset,
-  but transition style, effect intensity, music style and pacing are still
-  changed through the agent/EDL rather than dedicated controls.
+- **No 4K/custom output**, no packaged Kokoro E2E.
+- The full Phase 11 control set is not exposed: export has caption preset;
+  transition style, effect intensity, music style and pacing are still changed
+  through the agent/EDL rather than dedicated controls.
 
 ## 8. What is genuinely working and verified
 

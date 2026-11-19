@@ -1,4 +1,4 @@
-import type { Clip } from '../../edl/src/index';
+import type { Clip, Room } from '../../edl/src/index';
 import type { ClipPurpose } from './types';
 import { roomOf } from './classify';
 
@@ -121,6 +121,62 @@ export function narrativeOrder(
     purposes: ordered.map((entry) => entry.purpose),
     indices: ordered.map((entry) => entry.index),
   };
+}
+
+export function interleaveByRoom<T extends { clip: Clip }>(entries: readonly T[]): T[] {
+  if (entries.length < 3) return [...entries];
+  const result: T[] = [entries[0]!];
+  const pool = entries.slice(1, -1);
+  const last = entries[entries.length - 1]!;
+  let previousRoom = roomOf(result[0]!.clip);
+  while (pool.length > 0) {
+    const different = pool.find((entry) => roomOf(entry.clip) !== previousRoom);
+    const chosen = different ?? pool[0]!;
+    pool.splice(pool.indexOf(chosen), 1);
+    result.push(chosen);
+    previousRoom = roomOf(chosen.clip);
+  }
+  result.push(last);
+  return result;
+}
+
+/**
+ * Marketing beat template: the entrance reveal lands in the 23-28 s window,
+ * the price follows it, and the final living shot closes the film. Each room
+ * is drawn from the best remaining clip of that room.
+ */
+export function marketingStoryboard<T extends { clip: Clip }>(entries: readonly T[]): T[] {
+  const template: Room[] = [
+    'living', 'kitchen', 'living', 'bedroom', 'kitchen', 'living', 'kitchen',
+    'bedroom', 'kitchen', 'living', 'entry', 'kitchen', 'bedroom', 'living',
+    'bedroom', 'living',
+  ];
+  const pool = [...entries];
+  const result: T[] = [];
+  let previousRoom: Room | undefined;
+  for (const wanted of template) {
+    let chosen =
+      pool
+        .filter((entry) => roomOf(entry.clip) === wanted)
+        .sort(
+          (a, b) =>
+            (b.clip.scoreAtSelection ?? 0.5) - (a.clip.scoreAtSelection ?? 0.5),
+        )[0] ??
+      pool.find((entry) => roomOf(entry.clip) !== previousRoom) ??
+      pool[0];
+    if (chosen === undefined) break;
+    pool.splice(pool.indexOf(chosen), 1);
+    result.push(chosen);
+    previousRoom = roomOf(chosen.clip);
+  }
+  // Any leftover clips keep a different room from the previous beat.
+  while (pool.length > 0) {
+    const chosen = pool.find((entry) => roomOf(entry.clip) !== previousRoom) ?? pool[0]!;
+    pool.splice(pool.indexOf(chosen), 1);
+    result.push(chosen);
+    previousRoom = roomOf(chosen.clip);
+  }
+  return result;
 }
 
 export function orderReason(purpose: ClipPurpose): string {

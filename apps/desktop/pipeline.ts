@@ -1588,10 +1588,9 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
       parts.push(`${facts.beds} bedroom.`);
     }
 
-    const rooms = [...new Set(edl.clips.flatMap((clip) => (clip.room ? [clip.room] : [])))]
-      .slice(0, 4)
-      .map((room) => room.replace(/_/g, ' '));
-    if (rooms.length > 0) parts.push(`Featuring the ${rooms.join(', ')}.`);
+    // Do not narrate a room list: the visual order is a creative cut, and a
+    // caption naming a bathroom while a bedroom is on screen is worse than no
+    // room copy at all. The overlays carry the property detail.
 
     if (facts.price !== undefined && facts.price.trim().length > 0) {
       parts.push(`Offered at ${facts.price.trim()}.`);
@@ -2699,7 +2698,8 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
         gradePreset: spec.look === 'marketing' ? 'luxury' : undefined,
         addEffects: true,
         addTransitions: true,
-        preserveMarketingStructure: spec.format === 'marketing_38',
+        preserveMarketingStructure: false,
+        marketingStoryboard: spec.format === 'marketing_38',
       }).edl;
     } catch (error) {
       console.warn(

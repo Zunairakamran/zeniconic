@@ -188,7 +188,9 @@ export function assignTransitions(input: BoundaryInput): {
           : outgoing !== undefined && outgoing.type !== 'cut'
             ? outgoing
             : undefined;
-      if (existing !== undefined) {
+      // A dissolve between two shots of the same room ghosts one over the
+      // other. Keep the beat-sheet timing but make that boundary a cut.
+      if (existing !== undefined && !(sameRoom(previous, next) && existing.type === 'dissolve')) {
         const durationSec = roundTime(Math.min(existing.durationSec, Math.min(prevDur, nextDur) - 0.02));
         const handle = previous.handleOutSec ?? 0;
         const fitsHandle = input.borrowHandles || handle + 1e-9 >= durationSec;

@@ -5,7 +5,7 @@ partial, what is planned, and what is blocked.
 
 ## Evidence in one line
 
-- Root suite: **1566 passed, 1 skipped** (`npx vitest run`).
+- Root suite: **1586 passed, 1 skipped** (`npx vitest run`).
 - Renderer suite: **76 passed** (`apps/render`).
 - E2E: **66/66** (`node scripts/e2e.mjs`), 12 screenshots.
 - Typecheck: clean.
@@ -206,7 +206,7 @@ partial, what is planned, and what is blocked.
   Intake, Analysis and Settings all read real data; Settings models/spend/reset/
   music bank derive from `models.json` + catalogue. Browser demo data is gated
   to the no-Electron preview.
-- **Verification**: typecheck clean; root **1566 passed / 1 skipped** (126
+- **Verification**: typecheck clean; root **1586 passed / 1 skipped** (126
   files); render **76 passed**; e2e **66/66**; build passes; resume
   smoke PASS.
 

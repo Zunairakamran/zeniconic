@@ -32,6 +32,7 @@ import type { ProfileId, Quality } from '../../packages/render/src/index';
 import {
   buildAssDocument,
   buildFilterGraph,
+  captionEngineCuesForExport,
   planDrawTexts,
 } from './ffmpeg-overlays';
 import type { DrawTextSpec, OverlayBrand, OverlayFacts } from './ffmpeg-overlays';
@@ -220,7 +221,7 @@ export async function renderMarketingFilm(
   await mkdir(overlayDir, { recursive: true });
 
   const burnCaptions = options.burnCaptions ?? options.edl.captions.mode !== 'none';
-  const cues = burnCaptions ? marketingCaptionCues(options.edl) : [];
+  const cues = burnCaptions ? captionEngineCuesForExport(options.edl) : [];
   let assPath: string | undefined;
 
   if (cues.length > 0) {

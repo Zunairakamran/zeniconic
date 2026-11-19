@@ -71,6 +71,10 @@ export interface DirectOptions {
    * already carries a handle long enough for it. Default true.
    */
   borrowHandles?: boolean;
+  /** Reorder by room, round-robin, to avoid repeated adjacent rooms. */
+  interleaveRooms?: boolean;
+  /** Use the marketing beat template (entry reveal near 23-28 s). */
+  marketingStoryboard?: boolean;
   /**
    * For `marketing_38`, keep the planned clip order and its overlay windows.
    * Default true; only the opening and climax are strengthened.
