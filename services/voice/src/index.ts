@@ -6,6 +6,10 @@
  */
 
 export { DEFAULT_MUSIC_PATH, buildVoiceTrack, presenterWindowsFor, scriptCues } from './service';
+export { extractPresenterSpeech, longestSpeechRegion } from './presenter';
+export type { PresenterSpeechEntry, PresenterWord, PresenterExtractionResult } from './presenter';
+export { buildHybridCues, hasPresenterWindow, overlapsPresenter } from './hybrid';
+export type { HybridCueInput } from './hybrid';
 
 export {
   buildVoicePlan,

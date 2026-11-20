@@ -8,7 +8,7 @@ file, a test, or a live run noted inline.
 | Gate | Result |
 |---|---|
 | `npm run typecheck` | clean |
-| `npx vitest run` | **1586 passed, 1 skipped** (129 files) |
+| `npx vitest run` | **1589 passed, 1 skipped** (129 files) |
 | `apps/render` suite | **76 passed** |
 | `node scripts/e2e.mjs` | **66/66**, 12 screenshots |
 | `npm run build` | passes |

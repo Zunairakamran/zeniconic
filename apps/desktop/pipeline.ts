@@ -84,8 +84,11 @@ import type {
 } from '../../services/pipeline/ffmpeg-overlays';
 import {
   buildVoiceTrack,
+  buildHybridCues,
   createKokoroEngine,
   DEFAULT_VOICE,
+  extractPresenterSpeech,
+  hasPresenterWindow,
   modelFilesComplete,
   KOKORO_REPO,
   presenterWindowForCue,
@@ -1673,7 +1676,48 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     const withMusic = (): { audioPath?: string } => (music === undefined ? {} : { audioPath: music });
 
     const presenter = await exists(join(input.listingDir, 'out', 'audio', 'speech.json'));
-    if (input.mode === 'restore' && !presenter) {
+    let mode = input.mode;
+    let hybridCues: ReturnType<typeof buildHybridCues> | undefined;
+    const hybridWarnings: string[] = [];
+    if (input.mode === 'hybrid') {
+      const extraction = await extractPresenterSpeech({
+        edl: input.edl,
+        listingDir: input.listingDir,
+        ...(this.transcribe === undefined ? {} : { transcribe: this.transcribe }),
+        maxWindows: 1,
+      });
+      hybridWarnings.push(...extraction.warnings);
+      const windows = presenterWindowsFor(input.edl, input.listingDir);
+      if (!hasPresenterWindow(windows)) {
+        mode = 'ai';
+        hybridWarnings.push(
+          'No presenter speech was found in the entry/living clips; this export uses the AI voice only.',
+        );
+      } else {
+        const facts = input.listing.facts;
+        const address = input.listing.address.trim();
+        const community = input.listing.notes?.trim();
+        const lines = [
+          community !== undefined && community.length > 0
+            ? `${address}, ${community}.`
+            : `${address}.`,
+          facts.beds === undefined
+            ? undefined
+            : facts.baths === undefined
+              ? `${String(facts.beds)} bedroom.`
+              : `${String(facts.beds)} bedroom, ${String(facts.baths)} bathroom.`,
+          facts.price === undefined || facts.price.trim().length === 0
+            ? undefined
+            : `Offered at ${facts.price.trim()}.`,
+        ].filter((line): line is string => line !== undefined && line.length > 0);
+        hybridCues = buildHybridCues({
+          edl: input.edl,
+          windows,
+          lines,
+        });
+      }
+    }
+    if (mode === 'restore' && !presenter) {
       return {
         ...withMusic(),
         captions: [],
@@ -1684,7 +1728,7 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     }
 
     const preparedEdl: Edl =
-      input.mode === 'music'
+      mode === 'music'
         ? {
             ...input.edl,
             captions: { mode: 'none' },
@@ -1707,7 +1751,7 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
     let studioReady = false;
     let voiceFailure: string | undefined;
 
-    if (input.mode !== 'music') {
+    if (mode !== 'music') {
       try {
         // The studio key and voice are configured once in the main process
         // (`configureStudioVoice`); a key means the studio can speak with no
@@ -1763,6 +1807,7 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
         cacheDir,
         ...(modelCache === undefined ? {} : { modelDir: modelCache }),
         ...(this.ttsModel === undefined ? {} : { voiceModel: this.ttsModel }),
+        ...(hybridCues === undefined ? {} : { cues: hybridCues }),
         outDir,
         totalSec,
       });
@@ -1770,10 +1815,10 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
       return {
         audioPath: result.audioPath,
         captions:
-          input.mode === 'music'
+          mode === 'music'
             ? []
             : wordsFromCaptions(result.captions, totalSec),
-        warnings: result.warnings,
+        warnings: [...hybridWarnings, ...result.warnings],
         provider: result.provider,
         characters: result.characters,
       };
@@ -1784,7 +1829,7 @@ export class DesktopPipeline implements StageExecutor, PipelinePort {
         ...withMusic(),
         captions: [],
         warnings: [
-          input.mode === 'music' || music === undefined
+          mode === 'music' || music === undefined
             ? `The music bed could not be mastered (${reason}); exporting without audio.`
             : voiceProvider === 'studio'
               ? `The studio voice could not be used (${reason}); exporting with music only. Check the OpenRouter key in Settings, or install the offline voice model.`

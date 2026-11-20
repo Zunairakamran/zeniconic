@@ -317,7 +317,7 @@ export async function buildVoiceTrack(input: VoiceTrackInput): Promise<VoiceTrac
   }
 
   const voice = input.voice;
-  const cues = scriptCues(input.edl);
+  const cues = input.cues ?? scriptCues(input.edl);
   const windows = presenterWindowsFor(input.edl, listingDir, input.presenterClips);
 
   let engine: TtsEngine;

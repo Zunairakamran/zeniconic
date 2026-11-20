@@ -7,6 +7,7 @@
  */
 
 import type { Edl } from '../../../packages/edl/src/types';
+import type { ScriptCue } from './plan';
 
 /** One caption shown beside the audio. Seconds, never frames. */
 export interface VoiceCaption {
@@ -43,6 +44,8 @@ export interface VoiceTrackInput {
   edl: Edl;
   listingDir: string;
   presenterClips?: PresenterClipInput[];
+  /** Explicit script cues for a hybrid plan; defaults to the EDL script. */
+  cues?: readonly ScriptCue[];
   /**
    * Studio voice id (`matilda` by default). When the studio is not configured
    * the offline Kokoro voice is used instead and this value is ignored.

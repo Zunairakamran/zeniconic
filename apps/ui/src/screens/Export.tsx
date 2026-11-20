@@ -6,7 +6,7 @@ import type { ScreenProps } from '../types';
 import type { RenderInspectionDto } from '../../../packages/ipc/src/index';
 import './Export.css';
 
-type VoiceMode = 'restore' | 'ai' | 'music';
+type VoiceMode = 'restore' | 'ai' | 'hybrid' | 'music';
 type CoverMode = 'auto' | 'manual';
 type Phase = 'idle' | 'rendering' | 'done' | 'error';
 
@@ -72,6 +72,7 @@ const captionOptions: Array<{ value: CaptionMode; label: string; hint: string }>
 const voiceOptions: Array<{ value: VoiceMode; label: string; hint: string }> = [
   { value: 'restore', label: 'Restore original', hint: 'Free, on this machine' },
   { value: 'ai', label: 'AI voice', hint: 'Needs a connection' },
+  { value: 'hybrid', label: 'Hybrid', hint: 'Presenter + AI' },
   { value: 'music', label: 'Music only', hint: 'Free, on this machine' },
 ];
 

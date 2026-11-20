@@ -276,7 +276,7 @@ const VIDEO_EXTENSIONS = new Set([
 const THEMES: readonly Theme[] = ['light', 'dark'];
 const QUALITIES: readonly ExportQuality[] = ['draft', 'standard', 'high'];
 const CAPTION_MODES: readonly CaptionMode[] = ['off', 'burned', 'srt', 'both'];
-const VOICE_MODES: readonly VoiceMode[] = ['restore', 'ai', 'music'];
+const VOICE_MODES: readonly VoiceMode[] = ['restore', 'ai', 'hybrid', 'music'];
 const PROFILE_IDS = new Set<string>(Object.keys(PROFILES) satisfies string[]);
 const MAX_ADDRESS_LENGTH = 200;
 const MAX_PRICE_LENGTH = 40;
@@ -465,7 +465,7 @@ function requireRemixRoom(value: unknown): string {
 
 function requireVoiceMode(value: unknown): VoiceMode {
   if (typeof value !== 'string' || !(VOICE_MODES as readonly string[]).includes(value)) {
-    throw invalid('Voice must be restore, ai or music.');
+    throw invalid('Voice must be restore, ai, hybrid or music.');
   }
   return value as VoiceMode;
 }

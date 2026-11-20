@@ -49,6 +49,7 @@ bathroom is on screen when the word “bathroom” is spoken.
 | Calm cut | 30.000 s, 1080×1920, 48 kHz stereo |
 | Marketing 38 | 38.000 s, 1080×1920, 48 kHz stereo; entry at 23.0 s, CTA 33.5–38 s, no ghost at 36 s |
 | Real music | Lyria deep house, 112.02 BPM, 119 beats |
+| Hybrid voice | Presenter window from the entry/living clip + AI address/bedroom/price; both audible in the final track |
 | Review gate | Marketing passes (only the segment-cache informational warning) |
 | Model spend shown by app | **$0.02** |
 

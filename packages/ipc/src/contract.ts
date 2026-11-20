@@ -21,7 +21,7 @@ export type ExportQuality = 'draft' | 'standard' | 'high';
 export type CaptionMode = 'off' | 'burned' | 'srt' | 'both';
 
 /** Where the export's audio comes from. */
-export type VoiceMode = 'restore' | 'ai' | 'music';
+export type VoiceMode = 'restore' | 'ai' | 'hybrid' | 'music';
 
 /** The three creative directions planned after analysis. */
 export type VariantLook = 'calm' | 'walkthrough' | 'social' | 'marketing';

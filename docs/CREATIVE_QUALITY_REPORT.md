@@ -161,7 +161,7 @@ passes its beat grid into the EDL before cuts are chosen.
 
 ```
 npm run typecheck                         clean
-npx vitest run                            1586 passed, 1 skipped
+npx vitest run                            1589 passed, 1 skipped
 apps/render suite                         76 passed
 node scripts/e2e.mjs                      66/66
 npx tsx scripts/demo-build.ts             real 30 s + 38 s export
@@ -179,6 +179,31 @@ Real demo output:
 
 The export review passes: no room-order warning, no frozen-frame warning.
 Before/after montages: `demo/screenshots/before-after-calm.jpg` and `demo/screenshots/before-after-marketing38.jpg`.
+
+
+## Hybrid presenter + AI voice (implemented)
+
+The previous build had no hybrid because `VoiceMode` was only
+`restore | ai | music`, and the app had no `out/audio/speech.json`. The
+presenter voice existed only inside the source MP4s.
+
+Implemented:
+
+- `services/voice/src/presenter.ts`: local `silencedetect` extraction of the
+  longest presenter speech region, trimmed WAV, Scribe transcript, cached
+  `speech.json`.
+- `services/voice/src/hybrid.ts`: presenter cue per window plus AI lines placed
+  outside that window; no talking over the presenter.
+- `VoiceTrackInput.cues` so the voice stage consumes the hybrid cue plan.
+- `VoiceMode = 'hybrid'` through the contract, IPC validation, pipeline and the
+  Export screen.
+- Pipeline `buildAudioForListing({mode:'hybrid'})` extracts on demand and falls
+  back to AI-only with a warning if no presenter speech is transcribed.
+
+Real demo evidence: the final Marketing 38 track transcribes to both the
+presenter (“...coming right up to your apartment”) and the AI lines
+(“Marina Gate One, Dubai Marina. One bedroom. Offered at 1.4 million”). That is
+the acceptance proof that both voices are audible, not just configured.
 
 ## 7. Remaining limitations (honest)
 
